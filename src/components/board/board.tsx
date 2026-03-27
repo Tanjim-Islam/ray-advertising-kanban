@@ -13,7 +13,7 @@ import {
   type DragStartEvent,
 } from "@dnd-kit/core";
 import dynamic from "next/dynamic";
-import { useEffect, useState } from "react";
+import { useState, useSyncExternalStore } from "react";
 
 import { ActivityFeed } from "@/components/board/activity-feed";
 import { BoardColumn } from "@/components/board/board-column";
@@ -89,12 +89,12 @@ async function runWithViewTransition(action: () => Promise<void>) {
 
 function ThemeToggle() {
   const { mode, toggleMode } = useColorMode();
-  const [mounted, setMounted] = useState(false);
+  const mounted = useSyncExternalStore(
+    () => () => undefined,
+    () => true,
+    () => false,
+  );
   const isDark = mode === "dark";
-
-  useEffect(() => {
-    setMounted(true);
-  }, []);
 
   return (
     <button
@@ -276,7 +276,7 @@ function BoardSurface() {
   }
 
   return (
-    <div className="flex min-h-screen flex-col">
+    <div className="flex h-full min-h-0 flex-col overflow-hidden">
       <header className="shrink-0 border-b border-[var(--border)] bg-[var(--surface-raised)]">
         <div className="flex h-14 items-center justify-between px-4 sm:px-6">
           <div className="flex items-center gap-3">
@@ -414,8 +414,8 @@ function BoardSurface() {
         </div>
       ) : null}
 
-      <div className="flex flex-1 overflow-hidden">
-        <div className="flex-1 overflow-y-auto p-4 sm:p-6">
+      <div className="flex min-h-0 flex-1 overflow-hidden">
+        <div className="min-h-0 flex-1 overflow-y-auto p-4 sm:p-6">
           <DndContext
             sensors={sensors}
             collisionDetection={(args) => {
@@ -463,7 +463,7 @@ function BoardSurface() {
 
         <div
           className={cn(
-            "hidden overflow-hidden transition-[width,opacity] duration-300 ease-out xl:block",
+            "hidden h-full overflow-hidden transition-[width,opacity] duration-300 ease-out xl:block",
             showActivity ? "w-80 opacity-100" : "w-0 opacity-0",
           )}
         >

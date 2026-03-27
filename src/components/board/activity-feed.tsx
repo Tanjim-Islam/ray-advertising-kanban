@@ -1,8 +1,10 @@
+"use client";
+
 import { formatDistanceToNow } from "date-fns";
+import { useSyncExternalStore } from "react";
 
 import type { ActivityRecord } from "@/features/tasks/types/activity";
 import type { UserSummary } from "@/features/tasks/types/user";
-import { cn } from "@/lib/utils/cn";
 
 const ACTIVITY_ICONS: Record<string, string> = {
   TASK_CREATED: "●",
@@ -18,6 +20,30 @@ interface ActivityFeedProps {
   users: UserSummary[];
 }
 
+const subscribeToHydration = () => () => undefined;
+
+function RelativeTimestamp({ value }: { value: string }) {
+  const hydrated = useSyncExternalStore(
+    subscribeToHydration,
+    () => true,
+    () => false,
+  );
+
+  return (
+    <time
+      dateTime={value}
+      className="mt-0.5 block text-[11px] text-[var(--text-tertiary)]"
+      suppressHydrationWarning
+    >
+      {hydrated
+        ? formatDistanceToNow(new Date(value), {
+            addSuffix: true,
+          })
+        : ""}
+    </time>
+  );
+}
+
 export function ActivityFeed({ activities }: ActivityFeedProps) {
   return (
     <aside className="flex h-full flex-col border-b border-[var(--border)] bg-[var(--surface-raised)]">
@@ -27,14 +53,10 @@ export function ActivityFeed({ activities }: ActivityFeedProps) {
         </h2>
       </div>
 
-      <div className="flex-1 px-1 py-1">
+      <div className="min-h-0 flex-1 px-1 py-1">
         {activities.length > 0 ? (
-          <div
-            className={cn(
-              "divide-y divide-[var(--border)] overflow-y-auto rounded-b-xl",
-              activities.length > 5 && "max-h-[372px]",
-            )}
-          >
+          <div className="h-full overflow-y-auto rounded-b-xl">
+            <div className="divide-y divide-[var(--border)]">
             {activities.map((activity, index) => (
               <div
                 key={activity.id}
@@ -56,14 +78,11 @@ export function ActivityFeed({ activities }: ActivityFeedProps) {
                       {activity.message}
                     </span>
                   </p>
-                  <p className="mt-0.5 text-[11px] text-[var(--text-tertiary)]">
-                    {formatDistanceToNow(new Date(activity.createdAt), {
-                      addSuffix: true,
-                    })}
-                  </p>
+                  <RelativeTimestamp value={activity.createdAt} />
                 </div>
               </div>
             ))}
+            </div>
           </div>
         ) : (
           <div className="flex h-[180px] items-center justify-center px-4 text-center">

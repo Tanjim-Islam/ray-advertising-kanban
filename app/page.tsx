@@ -7,7 +7,7 @@ export default async function HomePage() {
   const snapshot = await getBoardSnapshot();
 
   return (
-    <main className="flex min-h-screen flex-col">
+    <main className="flex h-[100dvh] min-h-0 flex-col overflow-hidden">
       <Board initialSnapshot={snapshot} />
     </main>
   );
