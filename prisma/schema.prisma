@@ -1,0 +1,62 @@
+generator client {
+  provider = "prisma-client-js"
+}
+
+datasource db {
+  provider = "sqlite"
+  url      = env("DATABASE_URL")
+}
+
+enum TaskStatus {
+  TODO
+  IN_PROGRESS
+  DONE
+}
+
+enum ActivityType {
+  TASK_CREATED
+  TASK_UPDATED
+  TASK_MOVED
+  TASK_REORDERED
+}
+
+model User {
+  id           String     @id @default(cuid())
+  name         String     @unique
+  role         String?
+  color        String
+  initials     String
+  tasksCreated Task[]     @relation("TaskCreatedBy")
+  tasksUpdated Task[]     @relation("TaskUpdatedBy")
+  activities   Activity[]
+}
+
+model Task {
+  id              String      @id @default(cuid())
+  title           String
+  description     String
+  status          TaskStatus
+  order           Int
+  createdAt       DateTime    @default(now())
+  updatedAt       DateTime    @updatedAt
+  createdByUserId String?
+  updatedByUserId String?
+  createdBy       User?       @relation("TaskCreatedBy", fields: [createdByUserId], references: [id])
+  updatedBy       User?       @relation("TaskUpdatedBy", fields: [updatedByUserId], references: [id])
+  activities      Activity[]
+
+  @@index([status, order])
+}
+
+model Activity {
+  id        String       @id @default(cuid())
+  type      ActivityType
+  taskId    String
+  userId    String?
+  payload   String
+  createdAt DateTime     @default(now())
+  task      Task         @relation(fields: [taskId], references: [id], onDelete: Cascade)
+  user      User?        @relation(fields: [userId], references: [id])
+
+  @@index([createdAt])
+}
