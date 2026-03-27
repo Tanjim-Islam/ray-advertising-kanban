@@ -104,6 +104,16 @@ export function mapActivityToRecord(activity: ActivityWithUser | Activity): Acti
   };
 }
 
+export function mapActivityToRecordWithActor(
+  activity: Activity,
+  actor: User | null,
+): ActivityRecord {
+  return mapActivityToRecord({
+    ...activity,
+    user: actor,
+  });
+}
+
 export function mapBoardSnapshot(params: {
   activities: ActivityWithUser[];
   tasks: TaskWithUsers[];

@@ -1,6 +1,9 @@
 import { ActivityType, type Prisma, type Task, type TaskStatus } from "@prisma/client";
 
-import { mapActivityToRecord, mapTaskToRecord } from "@/features/tasks/lib/task-mappers";
+import {
+  mapActivityToRecordWithActor,
+  mapTaskToRecord,
+} from "@/features/tasks/lib/task-mappers";
 import { ORDER_INCREMENT } from "@/features/tasks/lib/task-utils";
 import type {
   CreateTaskInput,
@@ -10,8 +13,13 @@ import type {
   UpdateTaskInput,
 } from "@/lib/validations/task";
 import { getUserByIdOrThrow } from "@/lib/db/queries/users";
-import { prisma } from "@/lib/db/prisma";
+import { type DatabaseClient, prisma } from "@/lib/db/prisma";
 import { ApiError } from "@/lib/http/api-response";
+
+const TRANSACTION_OPTIONS = {
+  maxWait: 5_000,
+  timeout: 15_000,
+};
 
 function clampIndex(value: number, length: number) {
   return Math.min(Math.max(value, 0), length);
@@ -50,20 +58,17 @@ async function createActivity(
       userId: params.userId,
       payload: JSON.stringify(params.payload),
     },
-    include: {
-      user: true,
-    },
   });
 }
 
 async function hydrateTasksForStatuses(
-  client: Prisma.TransactionClient,
+  client: DatabaseClient,
   statuses: TaskStatus[],
 ) {
   return client.task.findMany({
     where: {
       status: {
-        in: statuses,
+        in: [...new Set(statuses)],
       },
     },
     orderBy: [{ status: "asc" }, { order: "asc" }],
@@ -115,10 +120,16 @@ async function persistColumnLayout(
   await Promise.all(updates);
 }
 
-export async function createTask(input: CreateTaskInput) {
-  return prisma.$transaction(async (client) => {
-    await getUserByIdOrThrow(input.actorUserId, client);
+async function runTaskMutation<T>(
+  mutation: (client: Prisma.TransactionClient) => Promise<T>,
+) {
+  return prisma.$transaction(mutation, TRANSACTION_OPTIONS);
+}
 
+export async function createTask(input: CreateTaskInput) {
+  const actor = await getUserByIdOrThrow(input.actorUserId, prisma);
+
+  return runTaskMutation(async (client) => {
     const lastTask = await client.task.findFirst({
       where: {
         status: input.status,
@@ -155,15 +166,16 @@ export async function createTask(input: CreateTaskInput) {
 
     return {
       task: mapTaskToRecord(task),
-      activity: mapActivityToRecord(activity),
+      activity: mapActivityToRecordWithActor(activity, actor),
       clientRequestId: input.clientRequestId ?? null,
     };
   });
 }
 
 export async function updateTask(taskId: string, input: UpdateTaskInput) {
-  return prisma.$transaction(async (client) => {
-    await getUserByIdOrThrow(input.actorUserId, client);
+  const actor = await getUserByIdOrThrow(input.actorUserId, prisma);
+
+  return runTaskMutation(async (client) => {
     await getTaskOrThrow(client, taskId);
 
     const task = await client.task.update({
@@ -193,15 +205,15 @@ export async function updateTask(taskId: string, input: UpdateTaskInput) {
 
     return {
       task: mapTaskToRecord(task),
-      activity: mapActivityToRecord(activity),
+      activity: mapActivityToRecordWithActor(activity, actor),
     };
   });
 }
 
 export async function moveTask(input: MoveTaskInput) {
-  return prisma.$transaction(async (client) => {
-    await getUserByIdOrThrow(input.actorUserId, client);
+  const actor = await getUserByIdOrThrow(input.actorUserId, prisma);
 
+  const result = await runTaskMutation(async (client) => {
     const task = await getTaskOrThrow(client, input.taskId);
 
     const [sourceTasks, destinationTasks] = await Promise.all([
@@ -250,42 +262,51 @@ export async function moveTask(input: MoveTaskInput) {
       activeTaskId: task.id,
     });
 
-    const [activity, affectedTasks, hydratedTask] = await Promise.all([
-      createActivity(client, {
-        type: ActivityType.TASK_MOVED,
-        taskId: task.id,
-        userId: input.actorUserId,
-        payload: {
-          fromStatus: task.status,
-          title: task.title,
-          toStatus: input.toStatus,
-        },
-      }),
-      hydrateTasksForStatuses(client, [task.status, input.toStatus]),
-      client.task.findUniqueOrThrow({
-        where: {
-          id: task.id,
-        },
-        include: {
-          createdBy: true,
-          updatedBy: true,
-        },
-      }),
-    ]);
+    const activity = await createActivity(client, {
+      type: ActivityType.TASK_MOVED,
+      taskId: task.id,
+      userId: input.actorUserId,
+      payload: {
+        fromStatus: task.status,
+        title: task.title,
+        toStatus: input.toStatus,
+      },
+    });
 
     return {
-      task: mapTaskToRecord(hydratedTask),
-      activity: mapActivityToRecord(activity),
-      affectedTasks: affectedTasks.map(mapTaskToRecord),
+      movedTaskId: task.id,
+      fromStatus: task.status,
+      toStatus: input.toStatus,
+      activity,
       clientRequestId: input.clientRequestId ?? null,
     };
   });
+
+  const [affectedTasks, hydratedTask] = await Promise.all([
+    hydrateTasksForStatuses(prisma, [result.fromStatus, result.toStatus]),
+    prisma.task.findUniqueOrThrow({
+      where: {
+        id: result.movedTaskId,
+      },
+      include: {
+        createdBy: true,
+        updatedBy: true,
+      },
+    }),
+  ]);
+
+  return {
+    task: mapTaskToRecord(hydratedTask),
+    activity: mapActivityToRecordWithActor(result.activity, actor),
+    affectedTasks: affectedTasks.map(mapTaskToRecord),
+    clientRequestId: result.clientRequestId,
+  };
 }
 
 export async function reorderTask(input: ReorderTaskInput) {
-  return prisma.$transaction(async (client) => {
-    await getUserByIdOrThrow(input.actorUserId, client);
+  const actor = await getUserByIdOrThrow(input.actorUserId, prisma);
 
+  const result = await runTaskMutation(async (client) => {
     const task = await getTaskOrThrow(client, input.taskId);
 
     if (task.status !== input.status) {
@@ -326,41 +347,49 @@ export async function reorderTask(input: ReorderTaskInput) {
       activeTaskId: task.id,
     });
 
-    const [activity, affectedTasks, hydratedTask] = await Promise.all([
-      createActivity(client, {
-        type: ActivityType.TASK_REORDERED,
-        taskId: task.id,
-        userId: input.actorUserId,
-        payload: {
-          status: input.status,
-          title: task.title,
-        },
-      }),
-      hydrateTasksForStatuses(client, [input.status]),
-      client.task.findUniqueOrThrow({
-        where: {
-          id: task.id,
-        },
-        include: {
-          createdBy: true,
-          updatedBy: true,
-        },
-      }),
-    ]);
+    const activity = await createActivity(client, {
+      type: ActivityType.TASK_REORDERED,
+      taskId: task.id,
+      userId: input.actorUserId,
+      payload: {
+        status: input.status,
+        title: task.title,
+      },
+    });
 
     return {
-      task: mapTaskToRecord(hydratedTask),
-      activity: mapActivityToRecord(activity),
-      affectedTasks: affectedTasks.map(mapTaskToRecord),
+      reorderedTaskId: task.id,
+      status: input.status,
+      activity,
       clientRequestId: input.clientRequestId ?? null,
     };
   });
+
+  const [affectedTasks, hydratedTask] = await Promise.all([
+    hydrateTasksForStatuses(prisma, [result.status]),
+    prisma.task.findUniqueOrThrow({
+      where: {
+        id: result.reorderedTaskId,
+      },
+      include: {
+        createdBy: true,
+        updatedBy: true,
+      },
+    }),
+  ]);
+
+  return {
+    task: mapTaskToRecord(hydratedTask),
+    activity: mapActivityToRecordWithActor(result.activity, actor),
+    affectedTasks: affectedTasks.map(mapTaskToRecord),
+    clientRequestId: result.clientRequestId,
+  };
 }
 
 export async function deleteTask(taskId: string, input: DeleteTaskInput) {
-  return prisma.$transaction(async (client) => {
-    await getUserByIdOrThrow(input.actorUserId, client);
+  const actor = await getUserByIdOrThrow(input.actorUserId, prisma);
 
+  const result = await runTaskMutation(async (client) => {
     const task = await getTaskOrThrow(client, taskId);
     const remainingTasks = await client.task.findMany({
       where: {
@@ -385,22 +414,27 @@ export async function deleteTask(taskId: string, input: DeleteTaskInput) {
       actorUserId: input.actorUserId,
     });
 
-    const [activity, affectedTasks] = await Promise.all([
-      createActivity(client, {
-        type: ActivityType.TASK_DELETED,
-        userId: input.actorUserId,
-        payload: {
-          status: task.status,
-          title: task.title,
-        },
-      }),
-      hydrateTasksForStatuses(client, [task.status]),
-    ]);
+    const activity = await createActivity(client, {
+      type: ActivityType.TASK_DELETED,
+      userId: input.actorUserId,
+      payload: {
+        status: task.status,
+        title: task.title,
+      },
+    });
 
     return {
       deletedTaskId: task.id,
-      activity: mapActivityToRecord(activity),
-      affectedTasks: affectedTasks.map(mapTaskToRecord),
+      status: task.status,
+      activity,
     };
   });
+
+  const affectedTasks = await hydrateTasksForStatuses(prisma, [result.status]);
+
+  return {
+    deletedTaskId: result.deletedTaskId,
+    activity: mapActivityToRecordWithActor(result.activity, actor),
+    affectedTasks: affectedTasks.map(mapTaskToRecord),
+  };
 }
