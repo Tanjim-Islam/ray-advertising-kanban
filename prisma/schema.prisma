@@ -18,6 +18,7 @@ enum ActivityType {
   TASK_UPDATED
   TASK_MOVED
   TASK_REORDERED
+  TASK_DELETED
 }
 
 model User {
@@ -51,11 +52,11 @@ model Task {
 model Activity {
   id        String       @id @default(cuid())
   type      ActivityType
-  taskId    String
+  taskId    String?
   userId    String?
   payload   String
   createdAt DateTime     @default(now())
-  task      Task         @relation(fields: [taskId], references: [id], onDelete: Cascade)
+  task      Task?        @relation(fields: [taskId], references: [id], onDelete: SetNull)
   user      User?        @relation(fields: [userId], references: [id])
 
   @@index([createdAt])

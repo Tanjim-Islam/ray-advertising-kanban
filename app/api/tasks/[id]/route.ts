@@ -1,8 +1,8 @@
-import { updateTask } from "@/lib/db/mutations/tasks";
+import { deleteTask, updateTask } from "@/lib/db/mutations/tasks";
 import { handleRouteError, jsonResponse, parseJsonBody } from "@/lib/http/api-response";
 import { SOCKET_EVENTS } from "@/lib/realtime/events";
 import { emitSocketEvent } from "@/lib/realtime/socket-server";
-import { updateTaskSchema } from "@/lib/validations/task";
+import { deleteTaskSchema, updateTaskSchema } from "@/lib/validations/task";
 
 export const runtime = "nodejs";
 export const dynamic = "force-dynamic";
@@ -17,6 +17,23 @@ export async function PATCH(
     const result = await updateTask(id, input);
 
     emitSocketEvent(SOCKET_EVENTS.taskUpdated, result);
+
+    return jsonResponse(result);
+  } catch (error) {
+    return handleRouteError(error);
+  }
+}
+
+export async function DELETE(
+  request: Request,
+  context: { params: Promise<{ id: string }> },
+) {
+  try {
+    const { id } = await context.params;
+    const input = await parseJsonBody(request, deleteTaskSchema);
+    const result = await deleteTask(id, input);
+
+    emitSocketEvent(SOCKET_EVENTS.taskDeleted, result);
 
     return jsonResponse(result);
   } catch (error) {

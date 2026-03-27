@@ -16,6 +16,10 @@ export const updateTaskSchema = z.object({
   actorUserId: z.string().min(1),
 });
 
+export const deleteTaskSchema = z.object({
+  actorUserId: z.string().min(1),
+});
+
 export const moveTaskSchema = z.object({
   taskId: z.string().min(1),
   toStatus: taskStatusSchema,
@@ -33,6 +37,7 @@ export const reorderTaskSchema = z.object({
 });
 
 export type CreateTaskInput = z.infer<typeof createTaskSchema>;
+export type DeleteTaskInput = z.infer<typeof deleteTaskSchema>;
 export type UpdateTaskInput = z.infer<typeof updateTaskSchema>;
 export type MoveTaskInput = z.infer<typeof moveTaskSchema>;
 export type ReorderTaskInput = z.infer<typeof reorderTaskSchema>;

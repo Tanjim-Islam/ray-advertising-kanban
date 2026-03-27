@@ -4,6 +4,7 @@ import { mapActivityToRecord, mapTaskToRecord } from "@/features/tasks/lib/task-
 import { ORDER_INCREMENT } from "@/features/tasks/lib/task-utils";
 import type {
   CreateTaskInput,
+  DeleteTaskInput,
   MoveTaskInput,
   ReorderTaskInput,
   UpdateTaskInput,
@@ -37,7 +38,7 @@ async function createActivity(
   client: Prisma.TransactionClient,
   params: {
     payload: Record<string, string>;
-    taskId: string;
+    taskId?: string | null;
     type: ActivityType;
     userId: string;
   },
@@ -45,7 +46,7 @@ async function createActivity(
   return client.activity.create({
     data: {
       type: params.type,
-      taskId: params.taskId,
+      taskId: params.taskId ?? null,
       userId: params.userId,
       payload: JSON.stringify(params.payload),
     },
@@ -352,6 +353,54 @@ export async function reorderTask(input: ReorderTaskInput) {
       activity: mapActivityToRecord(activity),
       affectedTasks: affectedTasks.map(mapTaskToRecord),
       clientRequestId: input.clientRequestId ?? null,
+    };
+  });
+}
+
+export async function deleteTask(taskId: string, input: DeleteTaskInput) {
+  return prisma.$transaction(async (client) => {
+    await getUserByIdOrThrow(input.actorUserId, client);
+
+    const task = await getTaskOrThrow(client, taskId);
+    const remainingTasks = await client.task.findMany({
+      where: {
+        status: task.status,
+      },
+      orderBy: {
+        order: "asc",
+      },
+    });
+
+    const filteredTasks = remainingTasks.filter((value) => value.id !== task.id);
+
+    await client.task.delete({
+      where: {
+        id: task.id,
+      },
+    });
+
+    await persistColumnLayout(client, {
+      tasks: filteredTasks,
+      status: task.status,
+      actorUserId: input.actorUserId,
+    });
+
+    const [activity, affectedTasks] = await Promise.all([
+      createActivity(client, {
+        type: ActivityType.TASK_DELETED,
+        userId: input.actorUserId,
+        payload: {
+          status: task.status,
+          title: task.title,
+        },
+      }),
+      hydrateTasksForStatuses(client, [task.status]),
+    ]);
+
+    return {
+      deletedTaskId: task.id,
+      activity: mapActivityToRecord(activity),
+      affectedTasks: affectedTasks.map(mapTaskToRecord),
     };
   });
 }

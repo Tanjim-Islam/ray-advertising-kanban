@@ -56,6 +56,8 @@ function buildActivityMessage(type: ActivityType, payload: ActivityPayload) {
       return `moved ${title} from ${getStatusLabel(payload.fromStatus)} to ${getStatusLabel(payload.toStatus)}.`;
     case ActivityType.TASK_REORDERED:
       return `reordered ${title} in ${getStatusLabel(payload.status)}.`;
+    case ActivityType.TASK_DELETED:
+      return `deleted ${title} from ${getStatusLabel(payload.status)}.`;
     default:
       return `updated ${title}.`;
   }

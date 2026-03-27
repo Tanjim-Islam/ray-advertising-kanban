@@ -1,19 +1,29 @@
 "use client";
 
 import {
-  closestCorners,
+  closestCenter,
   DndContext,
   DragOverlay,
+  getFirstCollision,
+  MeasuringStrategy,
   MouseSensor,
   pointerWithin,
+  rectIntersection,
   TouchSensor,
   useSensor,
   useSensors,
+  type DragOverEvent,
   type DragEndEvent,
   type DragStartEvent,
 } from "@dnd-kit/core";
 import dynamic from "next/dynamic";
-import { useState, useSyncExternalStore } from "react";
+import {
+  useCallback,
+  useEffect,
+  useRef,
+  useState,
+  type ComponentProps,
+} from "react";
 
 import { ActivityFeed } from "@/components/board/activity-feed";
 import { BoardColumn } from "@/components/board/board-column";
@@ -23,9 +33,10 @@ import { ErrorState } from "@/components/common/error-state";
 import { useColorMode } from "@/components/providers/app-providers";
 import { useBoardRealtime } from "@/features/tasks/hooks/use-board-realtime";
 import { useTaskActions } from "@/features/tasks/hooks/use-task-actions";
-import { resolveTaskMoveIntent } from "@/features/tasks/lib/reorder";
+import { applyTaskMove } from "@/features/tasks/lib/reorder";
 import {
   BOARD_STATUS_ORDER,
+  cloneColumns,
   findTaskLocation,
 } from "@/features/tasks/lib/task-utils";
 import {
@@ -87,29 +98,97 @@ async function runWithViewTransition(action: () => Promise<void>) {
   await transition.finished.catch(() => undefined);
 }
 
-function ThemeToggle() {
-  const { mode, toggleMode } = useColorMode();
-  const mounted = useSyncExternalStore(
-    () => () => undefined,
-    () => true,
-    () => false,
+function getDragPosition(
+  columns: BoardSnapshot["columns"],
+  taskId: string,
+) {
+  const location = findTaskLocation(columns, taskId);
+
+  return location
+    ? `${location.column.id}:${location.taskIndex}`
+    : null;
+}
+
+function isTaskStatus(value: string): value is TaskStatus {
+  return BOARD_STATUS_ORDER.includes(value as TaskStatus);
+}
+
+function findContainerId(columns: BoardSnapshot["columns"], id: string) {
+  if (isTaskStatus(id)) {
+    return id;
+  }
+
+  return findTaskLocation(columns, id)?.column.id ?? null;
+}
+
+function projectDragColumns(params: {
+  activeId: string;
+  activeRectTop: number | undefined;
+  columns: BoardSnapshot["columns"];
+  overId: string;
+  overRectHeight: number;
+  overRectTop: number;
+}) {
+  if (params.activeId === params.overId) {
+    return params.columns;
+  }
+
+  const activeLocation = findTaskLocation(params.columns, params.activeId);
+  const overContainerId = findContainerId(params.columns, params.overId);
+
+  if (!activeLocation || !overContainerId) {
+    return params.columns;
+  }
+
+  const targetColumn = params.columns.find(
+    (column) => column.id === overContainerId,
   );
-  const isDark = mode === "dark";
+
+  if (!targetColumn) {
+    return params.columns;
+  }
+
+  const overLocation = isTaskStatus(params.overId)
+    ? null
+    : findTaskLocation(params.columns, params.overId);
+
+  let toIndex = targetColumn.tasks.length;
+
+  if (overLocation) {
+    const isBelowOverItem =
+      params.activeRectTop !== undefined &&
+      params.activeRectTop > params.overRectTop + params.overRectHeight / 2;
+
+    toIndex = overLocation.taskIndex + (isBelowOverItem ? 1 : 0);
+  }
+
+  if (
+    activeLocation.column.id === overContainerId &&
+    activeLocation.taskIndex === toIndex
+  ) {
+    return params.columns;
+  }
+
+  return applyTaskMove(params.columns, {
+    taskId: params.activeId,
+    fromStatus: activeLocation.column.id,
+    fromIndex: activeLocation.taskIndex,
+    toStatus: overContainerId,
+    toIndex,
+  });
+}
+
+function ThemeToggle() {
+  const { toggleMode } = useColorMode();
 
   return (
     <button
       type="button"
       onClick={toggleMode}
-      aria-label={
-        mounted
-          ? `Switch to ${isDark ? "light" : "dark"} mode`
-          : "Toggle color mode"
-      }
+      aria-label="Toggle color mode"
       className="inline-flex h-8 w-8 items-center justify-center rounded-md border border-[var(--border)] bg-[var(--surface-raised)] text-[var(--text-secondary)] transition hover:bg-[var(--surface-hover)] hover:text-[var(--text-primary)]"
     >
-      {!mounted ? (
-        <span className="h-3.5 w-3.5 rounded-full border border-current opacity-70" />
-      ) : isDark ? (
+      <span className="theme-icon theme-icon-dark" aria-hidden="true">
         <svg width="14" height="14" viewBox="0 0 16 16" fill="none">
           <path
             d="M8 2.5v1.25M8 12.25v1.25M12.25 8h1.25M2.5 8h1.25M11.005 4.995l.884-.884M4.111 11.889l.884-.884M11.005 11.005l.884.884M4.111 4.111l.884.884M10.75 8A2.75 2.75 0 115.25 8a2.75 2.75 0 015.5 0z"
@@ -119,7 +198,8 @@ function ThemeToggle() {
             strokeLinejoin="round"
           />
         </svg>
-      ) : (
+      </span>
+      <span className="theme-icon theme-icon-light" aria-hidden="true">
         <svg width="14" height="14" viewBox="0 0 16 16" fill="none">
           <path
             d="M13 9.308A5.75 5.75 0 116.692 3 4.75 4.75 0 0013 9.308z"
@@ -129,7 +209,7 @@ function ThemeToggle() {
             strokeLinejoin="round"
           />
         </svg>
-      )}
+      </span>
     </button>
   );
 }
@@ -148,12 +228,36 @@ function BoardSurface() {
   const onlineUserIds = useUserStore((state) => state.onlineUserIds);
   const currentUser = useCurrentUser();
 
-  const { createTask, moveTask, reorderTask, updateTask } = useTaskActions();
+  const { createTask, deleteTask, moveTask, reorderTask, updateTask } =
+    useTaskActions();
   const [dialogState, setDialogState] = useState<DialogState>(null);
   const [activeTaskId, setActiveTaskId] = useState<string | null>(null);
+  const [dragColumns, setDragColumns] = useState<BoardSnapshot["columns"] | null>(
+    null,
+  );
+  const [deletingTaskIds, setDeletingTaskIds] = useState<Set<string>>(
+    () => new Set(),
+  );
   const [showActivity, setShowActivity] = useState(false);
+  const dragSnapshotRef = useRef<BoardSnapshot["columns"] | null>(null);
+  const lastOverIdRef = useRef<string | null>(null);
+  const recentlyMovedToNewColumnRef = useRef(false);
 
   useBoardRealtime();
+
+  useEffect(() => {
+    if (!activeTaskId) {
+      return;
+    }
+
+    const frame = window.requestAnimationFrame(() => {
+      recentlyMovedToNewColumnRef.current = false;
+    });
+
+    return () => {
+      window.cancelAnimationFrame(frame);
+    };
+  }, [activeTaskId, dragColumns]);
 
   const sensors = useSensors(
     useSensor(MouseSensor, {
@@ -164,8 +268,11 @@ function BoardSurface() {
     }),
   );
 
+  const renderedColumns = dragColumns ?? columns;
   const activeTask = activeTaskId
-    ? (findTaskLocation(columns, activeTaskId)?.task ?? null)
+    ? (findTaskLocation(dragSnapshotRef.current ?? columns, activeTaskId)?.task ??
+      findTaskLocation(columns, activeTaskId)?.task ??
+      null)
     : null;
 
   const totalTasks = columns.reduce((sum, col) => sum + col.tasks.length, 0);
@@ -179,46 +286,184 @@ function BoardSurface() {
     />
   );
 
-  async function handleDragEnd(event: DragEndEvent) {
-    const activeId = String(event.active.id);
+  function clearDeleteState(taskId: string) {
+    setDeletingTaskIds((current) => {
+      const next = new Set(current);
+      next.delete(taskId);
+      return next;
+    });
+  }
+
+  const collisionDetectionStrategy = useCallback(
+    (
+      args: Parameters<
+        NonNullable<ComponentProps<typeof DndContext>["collisionDetection"]>
+      >[0],
+    ) => {
+      const pointerCollisions = pointerWithin(args);
+      const collisions =
+        pointerCollisions.length > 0 ? pointerCollisions : rectIntersection(args);
+      let overId = getFirstCollision(collisions, "id");
+
+      if (overId) {
+        const previewColumns = dragColumns ?? dragSnapshotRef.current ?? columns;
+        const overContainerId = findContainerId(previewColumns, String(overId));
+        const overColumn = overContainerId
+          ? previewColumns.find((column) => column.id === overContainerId)
+          : null;
+
+        if (
+          overColumn &&
+          String(overId) === overColumn.id &&
+          overColumn.tasks.length > 0
+        ) {
+          const itemCollision = closestCenter({
+            ...args,
+            droppableContainers: args.droppableContainers.filter((container) =>
+              container.id !== activeTaskId &&
+              overColumn.tasks.some((task) => task.id === container.id),
+            ),
+          })[0]?.id;
+
+          if (itemCollision) {
+            overId = itemCollision;
+          }
+        }
+
+        lastOverIdRef.current = String(overId);
+        return [{ id: overId }];
+      }
+
+      if (recentlyMovedToNewColumnRef.current && activeTaskId) {
+        lastOverIdRef.current = activeTaskId;
+      }
+
+      return lastOverIdRef.current ? [{ id: lastOverIdRef.current }] : [];
+    },
+    [activeTaskId, columns, dragColumns],
+  );
+
+  function handleDragOver(event: DragOverEvent) {
     const overId = event.over?.id ? String(event.over.id) : null;
 
-    setActiveTaskId(null);
-
-    if (!overId) {
+    if (!activeTaskId || !overId) {
       return;
     }
 
-    const intent = resolveTaskMoveIntent(columns, activeId, overId);
+    setDragColumns((current) => {
+      const previewColumns = current ?? cloneColumns(columns);
+      const previousLocation = findTaskLocation(previewColumns, activeTaskId);
+      const nextColumns = projectDragColumns({
+        activeId: activeTaskId,
+        activeRectTop: event.active.rect.current.translated?.top,
+        columns: previewColumns,
+        overId,
+        overRectHeight: event.over?.rect.height ?? 0,
+        overRectTop: event.over?.rect.top ?? 0,
+      });
 
-    if (!intent) {
+      if (
+        getDragPosition(previewColumns, activeTaskId) ===
+        getDragPosition(nextColumns, activeTaskId)
+      ) {
+        return current;
+      }
+
+      const nextLocation = findTaskLocation(nextColumns, activeTaskId);
+      recentlyMovedToNewColumnRef.current =
+        previousLocation?.column.id !== nextLocation?.column.id;
+
+      return nextColumns;
+    });
+  }
+
+  async function handleDragEnd(event: DragEndEvent) {
+    const activeId = String(event.active.id);
+    const finalColumns = dragColumns ?? columns;
+    const sourceColumns = dragSnapshotRef.current ?? columns;
+    const lastOverId = lastOverIdRef.current;
+    const previewChanged =
+      getDragPosition(sourceColumns, activeId) !==
+      getDragPosition(finalColumns, activeId);
+
+    const resetDragState = () => {
+      setActiveTaskId(null);
+      setDragColumns(null);
+      dragSnapshotRef.current = null;
+      lastOverIdRef.current = null;
+      recentlyMovedToNewColumnRef.current = false;
+    };
+
+    if (!event.over && (!previewChanged || lastOverId === activeId)) {
+      resetDragState();
+      return;
+    }
+
+    const sourceLocation = findTaskLocation(sourceColumns, activeId);
+    const destinationLocation = findTaskLocation(finalColumns, activeId);
+
+    if (!sourceLocation || !destinationLocation) {
+      resetDragState();
       return;
     }
 
     const unchanged =
-      intent.fromStatus === intent.toStatus &&
-      intent.fromIndex === intent.toIndex;
+      sourceLocation.column.id === destinationLocation.column.id &&
+      sourceLocation.taskIndex === destinationLocation.taskIndex;
 
     if (unchanged) {
+      resetDragState();
       return;
     }
 
-    await runWithViewTransition(async () => {
-      if (intent.fromStatus === intent.toStatus) {
-        await reorderTask({
-          taskId: intent.taskId,
-          status: intent.toStatus,
-          toIndex: intent.toIndex,
-        });
-        return;
-      }
+    setActiveTaskId(null);
 
-      await moveTask({
-        taskId: intent.taskId,
-        toStatus: intent.toStatus,
-        toIndex: intent.toIndex,
+    try {
+      await runWithViewTransition(async () => {
+        if (sourceLocation.column.id === destinationLocation.column.id) {
+          await reorderTask({
+            taskId: activeId,
+            status: destinationLocation.column.id,
+            toIndex: destinationLocation.taskIndex,
+          });
+          return;
+        }
+
+        await moveTask({
+          taskId: activeId,
+          toStatus: destinationLocation.column.id,
+          toIndex: destinationLocation.taskIndex,
+        });
       });
+    } finally {
+      resetDragState();
+    }
+  }
+
+  async function handleDeleteTask(task: TaskRecord) {
+    if (deletingTaskIds.has(task.id)) {
+      return;
+    }
+
+    setDeletingTaskIds((current) => {
+      const next = new Set(current);
+      next.add(task.id);
+      return next;
     });
+
+    try {
+      await new Promise((resolve) => {
+        window.setTimeout(resolve, 180);
+      });
+
+      await runWithViewTransition(async () => {
+        await deleteTask({
+          taskId: task.id,
+        });
+      });
+    } finally {
+      clearDeleteState(task.id);
+    }
   }
 
   async function handleTaskMovement(
@@ -418,30 +663,46 @@ function BoardSurface() {
         <div className="min-h-0 flex-1 overflow-y-auto p-4 sm:p-6">
           <DndContext
             sensors={sensors}
-            collisionDetection={(args) => {
-              const pointerCollisions = pointerWithin(args);
-              if (pointerCollisions.length > 0) {
-                return pointerCollisions;
-              }
-
-              return closestCorners(args);
+            collisionDetection={collisionDetectionStrategy}
+            measuring={{
+              droppable: {
+                strategy: MeasuringStrategy.Always,
+              },
             }}
             onDragStart={(event: DragStartEvent) => {
-              setActiveTaskId(String(event.active.id));
+              const activeId = String(event.active.id);
+              const snapshot = cloneColumns(columns);
+
+              setActiveTaskId(activeId);
+              setDragColumns(snapshot);
+              dragSnapshotRef.current = snapshot;
+              lastOverIdRef.current = activeId;
+              recentlyMovedToNewColumnRef.current = false;
             }}
-            onDragCancel={() => setActiveTaskId(null)}
+            onDragOver={handleDragOver}
+            onDragCancel={() => {
+              setActiveTaskId(null);
+              setDragColumns(null);
+              dragSnapshotRef.current = null;
+              lastOverIdRef.current = null;
+              recentlyMovedToNewColumnRef.current = false;
+            }}
             onDragEnd={(event) => {
               void handleDragEnd(event).catch(() => undefined);
             }}
           >
             <div className="grid gap-4 lg:grid-cols-3">
-              {columns.map((column) => (
+              {renderedColumns.map((column) => (
                 <BoardColumn
                   key={column.id}
                   column={column}
+                  deletingTaskIds={deletingTaskIds}
                   onCreateTask={(status) =>
                     setDialogState({ mode: "create", status })
                   }
+                  onDeleteTask={(task) => {
+                    void handleDeleteTask(task).catch(() => undefined);
+                  }}
                   onEditTask={(task) => setDialogState({ mode: "edit", task })}
                   onMoveTask={(task, direction) => {
                     void handleTaskMovement(task, direction).catch(

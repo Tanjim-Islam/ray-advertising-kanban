@@ -58,6 +58,7 @@ export function useBoardRealtime() {
     socket.on(SOCKET_EVENTS.taskUpdated, applyMutation);
     socket.on(SOCKET_EVENTS.taskMoved, applyMutation);
     socket.on(SOCKET_EVENTS.taskReordered, applyMutation);
+    socket.on(SOCKET_EVENTS.taskDeleted, applyMutation);
     socket.on(SOCKET_EVENTS.presenceUpdated, applyPresence);
 
     boardStore.getState().setConnectionStatus(
@@ -80,6 +81,7 @@ export function useBoardRealtime() {
       socket.off(SOCKET_EVENTS.taskUpdated, applyMutation);
       socket.off(SOCKET_EVENTS.taskMoved, applyMutation);
       socket.off(SOCKET_EVENTS.taskReordered, applyMutation);
+      socket.off(SOCKET_EVENTS.taskDeleted, applyMutation);
       socket.off(SOCKET_EVENTS.presenceUpdated, applyPresence);
     };
   }, [boardStore, currentUserId]);

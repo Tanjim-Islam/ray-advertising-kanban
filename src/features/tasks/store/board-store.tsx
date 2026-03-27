@@ -7,6 +7,7 @@ import {
   applyTaskCollection,
   prependActivity,
   replaceOptimisticTask,
+  removeTask,
   upsertTask,
 } from "@/features/tasks/lib/task-utils";
 import type { BoardSnapshot } from "@/features/tasks/types/board";
@@ -31,7 +32,7 @@ export interface BoardStoreState {
   setConnectionStatus: (status: RealtimeStatus) => void;
   setIsMutating: (value: boolean) => void;
   setLastError: (message: string | null) => void;
-  setOptimisticTask: (task: TaskMutationPayload["task"]) => void;
+  setOptimisticTask: (task: BoardSnapshot["columns"][number]["tasks"][number]) => void;
 }
 
 type BoardStoreApi = ReturnType<typeof createBoardStore>;
@@ -87,7 +88,7 @@ export function createBoardStore(snapshot: BoardSnapshot) {
     applyMutation: (payload) => {
       set((state) => {
         const columnsAfterRequestMatch =
-          payload.clientRequestId
+          payload.clientRequestId && payload.task
             ? replaceOptimisticTask(
                 state.columns,
                 payload.clientRequestId,
@@ -95,7 +96,12 @@ export function createBoardStore(snapshot: BoardSnapshot) {
               )
             : state.columns;
 
-        const columnsAfterTask = upsertTask(columnsAfterRequestMatch, payload.task);
+        const columnsAfterDeletion = payload.deletedTaskId
+          ? removeTask(columnsAfterRequestMatch, payload.deletedTaskId)
+          : columnsAfterRequestMatch;
+        const columnsAfterTask = payload.task
+          ? upsertTask(columnsAfterDeletion, payload.task)
+          : columnsAfterDeletion;
         const nextColumns = payload.affectedTasks?.length
           ? applyTaskCollection(columnsAfterTask, payload.affectedTasks)
           : columnsAfterTask;

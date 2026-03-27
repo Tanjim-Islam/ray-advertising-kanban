@@ -1,7 +1,7 @@
 import { afterAll, afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 
 import { GET as getBoard } from "@/app/api/board/route";
-import { PATCH } from "@/app/api/tasks/[id]/route";
+import { DELETE, PATCH } from "@/app/api/tasks/[id]/route";
 import { POST as createTaskRoute } from "@/app/api/tasks/route";
 import { POST as moveTaskRoute } from "@/app/api/tasks/move/route";
 import { POST as reorderTaskRoute } from "@/app/api/tasks/reorder/route";
@@ -146,5 +146,75 @@ describe("task routes", () => {
 
     expect(todoColumn?.tasks.map((task) => task.title)).toEqual(["Third", "Second"]);
     expect(inProgressColumn?.tasks.map((task) => task.title)).toEqual(["First"]);
+  });
+
+  it("deletes a task and emits a persisted delete activity", async () => {
+    const emit = vi.fn();
+    globalThis.__boardSocketServer = {
+      emit,
+    } as never;
+
+    const actor = await prisma.user.findFirstOrThrow();
+
+    const createResponse = await createTaskRoute(
+      new Request("http://localhost/api/tasks", {
+        method: "POST",
+        body: JSON.stringify({
+          title: "Disposable task",
+          description: "Remove me cleanly.",
+          status: "TODO",
+          actorUserId: actor.id,
+        }),
+      }),
+    );
+
+    const created = (await createResponse.json()) as { task: { id: string } };
+
+    const deleteResponse = await DELETE(
+      new Request(`http://localhost/api/tasks/${created.task.id}`, {
+        method: "DELETE",
+        body: JSON.stringify({
+          actorUserId: actor.id,
+        }),
+      }),
+      {
+        params: Promise.resolve({
+          id: created.task.id,
+        }),
+      },
+    );
+
+    const deleted = (await deleteResponse.json()) as {
+      activity: { message: string; type: string };
+      deletedTaskId: string;
+    };
+
+    expect(deleteResponse.status).toBe(200);
+    expect(deleted.deletedTaskId).toBe(created.task.id);
+    expect(deleted.activity.type).toBe("TASK_DELETED");
+    expect(deleted.activity.message).toContain("deleted");
+    expect(emit).toHaveBeenCalledWith(
+      SOCKET_EVENTS.taskDeleted,
+      expect.objectContaining({
+        deletedTaskId: created.task.id,
+      }),
+    );
+
+    const deletedTask = await prisma.task.findUnique({
+      where: {
+        id: created.task.id,
+      },
+    });
+    const persistedDeleteActivity = await prisma.activity.findFirst({
+      where: {
+        type: "TASK_DELETED",
+      },
+      orderBy: {
+        createdAt: "desc",
+      },
+    });
+
+    expect(deletedTask).toBeNull();
+    expect(persistedDeleteActivity?.taskId).toBeNull();
   });
 });

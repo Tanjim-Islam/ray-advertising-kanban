@@ -1,6 +1,10 @@
 import { describe, expect, it } from "vitest";
 
-import { prependActivity, replaceOptimisticTask } from "@/features/tasks/lib/task-utils";
+import {
+  prependActivity,
+  removeTask,
+  replaceOptimisticTask,
+} from "@/features/tasks/lib/task-utils";
 import { createBoardColumns } from "@/features/tasks/lib/task-utils";
 import type { ActivityRecord } from "@/features/tasks/types/activity";
 import type { TaskRecord } from "@/features/tasks/types/task";
@@ -56,5 +60,17 @@ describe("task utilities", () => {
 
     expect(prependActivity([first], second)).toEqual([second, first]);
     expect(prependActivity([first], first)).toEqual([first]);
+  });
+
+  it("removes a task from every column copy without mutating the original input", () => {
+    const columns = createBoardColumns([
+      makeTask({ id: "task-a", title: "Task A" }),
+      makeTask({ id: "task-b", title: "Task B", status: "IN_PROGRESS" }),
+    ]);
+
+    const nextColumns = removeTask(columns, "task-b");
+
+    expect(nextColumns[1]?.tasks).toEqual([]);
+    expect(columns[1]?.tasks.map((task) => task.id)).toEqual(["task-b"]);
   });
 });

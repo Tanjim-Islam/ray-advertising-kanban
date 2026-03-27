@@ -1,6 +1,7 @@
 "use client";
 
 import { createTaskRequest } from "@/features/tasks/api/create-task";
+import { deleteTaskRequest } from "@/features/tasks/api/delete-task";
 import { moveTaskRequest } from "@/features/tasks/api/move-task";
 import { reorderTaskRequest } from "@/features/tasks/api/reorder-task";
 import { updateTaskRequest } from "@/features/tasks/api/update-task";
@@ -8,7 +9,7 @@ import { applyTaskMove } from "@/features/tasks/lib/reorder";
 import { captureBoardStoreSnapshot, useBoardStoreApi } from "@/features/tasks/store/board-store";
 import { useCurrentUser } from "@/features/tasks/store/user-store";
 import type { TaskStatus } from "@/features/tasks/types/task";
-import { findTaskLocation } from "@/features/tasks/lib/task-utils";
+import { findTaskLocation, removeTask } from "@/features/tasks/lib/task-utils";
 
 function getErrorMessage(error: unknown) {
   if (error instanceof Error) {
@@ -78,11 +79,16 @@ export function useTaskActions() {
         actorUserId: currentUser.id,
         clientRequestId,
       });
+      const persistedTask = result.task;
+
+      if (!persistedTask) {
+        throw new Error("The created task response was incomplete.");
+      }
 
       boardStore.getState().applyMutation({
         ...result,
         task: {
-          ...result.task,
+          ...persistedTask,
           clientRequestId,
         },
       });
@@ -176,6 +182,34 @@ export function useTaskActions() {
     });
   }
 
+  async function deleteTask(params: { taskId: string }) {
+    if (!currentUser) {
+      throw new Error("Select a simulated teammate before deleting a task.");
+    }
+
+    return withRollback(async () => {
+      const location = findTaskLocation(
+        boardStore.getState().columns,
+        params.taskId,
+      );
+
+      if (!location) {
+        throw new Error("The selected task could not be found.");
+      }
+
+      boardStore.getState().replaceSnapshot({
+        columns: removeTask(boardStore.getState().columns, params.taskId),
+        activities: boardStore.getState().activities,
+      });
+
+      const result = await deleteTaskRequest(params.taskId, {
+        actorUserId: currentUser.id,
+      });
+
+      boardStore.getState().applyMutation(result);
+    });
+  }
+
   async function reorderTask(params: {
     status: TaskStatus;
     taskId: string;
@@ -220,6 +254,7 @@ export function useTaskActions() {
 
   return {
     createTask,
+    deleteTask,
     moveTask,
     reorderTask,
     updateTask,

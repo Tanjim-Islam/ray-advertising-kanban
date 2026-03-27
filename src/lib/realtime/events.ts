@@ -8,6 +8,7 @@ export const SOCKET_EVENTS = {
   taskUpdated: "task:updated",
   taskMoved: "task:moved",
   taskReordered: "task:reordered",
+  taskDeleted: "task:deleted",
   userChanged: "user:changed",
   presenceUpdated: "presence:updated",
 } as const;
@@ -21,10 +22,11 @@ export interface PresenceUpdatedPayload {
 }
 
 export interface TaskMutationPayload {
-  task: TaskRecord;
   activity: ActivityRecord;
+  task?: TaskRecord;
   affectedTasks?: TaskRecord[];
   clientRequestId?: string | null;
+  deletedTaskId?: string | null;
 }
 
 export interface UserChangedPayload {
@@ -37,6 +39,7 @@ export interface ServerToClientEvents {
   [SOCKET_EVENTS.taskUpdated]: (payload: TaskMutationPayload) => void;
   [SOCKET_EVENTS.taskMoved]: (payload: TaskMutationPayload) => void;
   [SOCKET_EVENTS.taskReordered]: (payload: TaskMutationPayload) => void;
+  [SOCKET_EVENTS.taskDeleted]: (payload: TaskMutationPayload) => void;
   [SOCKET_EVENTS.presenceUpdated]: (payload: PresenceUpdatedPayload) => void;
 }
 

@@ -23,12 +23,16 @@ const STATUS_DOT: Record<TaskStatus, string> = {
 
 export function BoardColumn({
   column,
+  deletingTaskIds,
   onCreateTask,
+  onDeleteTask,
   onEditTask,
   onMoveTask,
 }: {
   column: BoardColumnType;
+  deletingTaskIds?: ReadonlySet<string>;
   onCreateTask: (status: BoardColumnType["id"]) => void;
+  onDeleteTask: (task: TaskRecord) => void;
   onEditTask: (task: TaskRecord) => void;
   onMoveTask: (
     task: TaskRecord,
@@ -72,6 +76,8 @@ export function BoardColumn({
               <TaskCard
                 key={task.id}
                 task={task}
+                isDeleting={deletingTaskIds?.has(task.id)}
+                onDelete={onDeleteTask}
                 onEdit={onEditTask}
                 moveControls={{
                   moveLeft:

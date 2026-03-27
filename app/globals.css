@@ -96,3 +96,19 @@ body {
 .animate-activity-enter {
   animation: activity-enter 220ms ease-out both;
 }
+
+.theme-icon {
+  display: inline-flex;
+}
+
+.theme-icon-dark {
+  display: none;
+}
+
+[data-theme="dark"] .theme-icon-dark {
+  display: inline-flex;
+}
+
+[data-theme="dark"] .theme-icon-light {
+  display: none;
+}

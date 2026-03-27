@@ -107,6 +107,13 @@ export function upsertTask(columns: BoardColumn[], task: TaskRecord) {
   return nextColumns;
 }
 
+export function removeTask(columns: BoardColumn[], taskId: string) {
+  return columns.map((column) => ({
+    ...column,
+    tasks: column.tasks.filter((task) => task.id !== taskId),
+  }));
+}
+
 export function applyTaskCollection(columns: BoardColumn[], tasks: TaskRecord[]) {
   return tasks.reduce((currentColumns, task) => upsertTask(currentColumns, task), columns);
 }

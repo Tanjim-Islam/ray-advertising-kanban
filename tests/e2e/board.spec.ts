@@ -13,15 +13,11 @@ async function createTaskInColumn(page: Page, columnId: string, title: string, d
   await page.getByRole("button", { name: /create task/i }).click();
 }
 
-function dragSurface(locator: ReturnType<typeof taskCardByTitle>) {
-  return locator.locator('[data-testid^="task-card-drag-surface-"]');
-}
-
 async function dragTaskToColumn(page: Page, title: string, columnId: string) {
-  const sourceHandle = dragSurface(taskCardByTitle(page, title));
+  const sourceCard = taskCardByTitle(page, title);
   const targetColumn = page.getByTestId(`board-column-${columnId}`);
 
-  const sourceBox = await sourceHandle.boundingBox();
+  const sourceBox = await sourceCard.boundingBox();
   const targetBox = await targetColumn.boundingBox();
 
   if (!sourceBox || !targetBox) {
@@ -29,12 +25,12 @@ async function dragTaskToColumn(page: Page, title: string, columnId: string) {
   }
 
   await page.mouse.move(
-    sourceBox.x + sourceBox.width / 2,
+    sourceBox.x + sourceBox.width - 22,
     sourceBox.y + sourceBox.height / 2,
   );
   await page.mouse.down();
   await page.mouse.move(
-    sourceBox.x + sourceBox.width / 2 + 24,
+    sourceBox.x + sourceBox.width + 24,
     sourceBox.y + sourceBox.height / 2 + 24,
     { steps: 12 },
   );
@@ -122,6 +118,17 @@ test("board supports create, edit, drag, reorder, persistence, and realtime sync
       .locator('[data-testid^="task-card-"]')
       .first(),
   ).toContainText("Add activity coverage");
+
+  await taskCardByTitle(pageOne, "Ship realtime board v2")
+    .getByRole("button", { name: /delete task/i })
+    .click();
+
+  await expect(taskCardByTitle(pageOne, "Ship realtime board v2")).toHaveCount(0);
+  await expect(taskCardByTitle(pageTwo, "Ship realtime board v2")).toHaveCount(0);
+  await pageOne.getByRole("button", { name: /activity/i }).click();
+  await expect(
+    pageOne.getByText(/deleted “Ship realtime board v2”/i).first(),
+  ).toBeVisible();
 
   await contextOne.close();
   await contextTwo.close();
