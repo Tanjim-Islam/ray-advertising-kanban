@@ -59,7 +59,7 @@ npm run prisma:seed
 npm run dev
 ```
 
-The local app runs at [http://127.0.0.1:3000](http://127.0.0.1:3000).
+The local app runs at [http://localhost:3000](http://localhost:3000).
 
 ## Environment Variables
 
@@ -171,7 +171,7 @@ Server communication stays in hooks and API helpers, not in presentational compo
 
 ## Realtime
 
-Realtime is driven by Supabase instead of a custom WebSocket server.
+Realtime is driven by Supabase.
 
 Flow:
 
@@ -179,10 +179,10 @@ Flow:
 2. A Next.js route handler validates the request with Zod.
 3. Prisma writes the change to Supabase Postgres inside a transaction.
 4. The route handler broadcasts the exact mutation payload through Supabase Realtime Broadcast.
-5. Connected clients apply that payload directly to the board store instead of refetching the whole board.
+5. Connected clients apply that payload directly to the board store.
 6. Presence is tracked through a Supabase Realtime channel and mapped to the simulated user list.
 
-This keeps cross-session updates tighter than a `postgres_changes -> refetch /api/board` loop and preserves the optimistic feel for the initiating client.
+This keeps cross-session updates fast and preserves the optimistic feel for the initiating client.
 
 ## Testing
 
@@ -193,6 +193,10 @@ Automated coverage includes:
 - Playwright E2E for core browser flows including create, edit, status changes, persistence after reload, delete flows, and multi-session realtime sync
 
 Integration tests use an isolated Supabase schema. The Playwright run reseeds the configured app schema to validate the same realtime wiring used by the app runtime.
+
+## AI-Assisted Development
+
+I used AI during development to speed up implementation, debugging, and iteration, but I reviewed everything manually, corrected weak outputs, and kept steering it back to the assignment requirements whenever needed. I made the final decisions myself and validated the finished implementation against the required stack, architecture, and behavior.
 
 ## Folder Structure
 
