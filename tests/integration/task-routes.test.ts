@@ -1,4 +1,4 @@
-import { afterAll, afterEach, beforeEach, describe, expect, it, vi } from "vitest";
+import { afterAll, beforeEach, describe, expect, it } from "vitest";
 
 import { GET as getBoard } from "@/app/api/board/route";
 import { DELETE, PATCH } from "@/app/api/tasks/[id]/route";
@@ -6,7 +6,6 @@ import { POST as createTaskRoute } from "@/app/api/tasks/route";
 import { POST as moveTaskRoute } from "@/app/api/tasks/move/route";
 import { POST as reorderTaskRoute } from "@/app/api/tasks/reorder/route";
 import { prisma } from "@/lib/db/prisma";
-import { SOCKET_EVENTS } from "@/lib/realtime/events";
 import { disconnectDatabase, resetDatabase } from "../setup/test-db";
 
 describe("task routes", () => {
@@ -14,20 +13,11 @@ describe("task routes", () => {
     await resetDatabase();
   });
 
-  afterEach(() => {
-    globalThis.__boardSocketServer = undefined;
-  });
-
   afterAll(async () => {
     await disconnectDatabase();
   });
 
-  it("creates and updates a task while emitting realtime events", async () => {
-    const emit = vi.fn();
-    globalThis.__boardSocketServer = {
-      emit,
-    } as never;
-
+  it("creates and updates a task with persisted activity", async () => {
     const actor = await prisma.user.findFirstOrThrow();
 
     const createResponse = await createTaskRoute(
@@ -47,14 +37,6 @@ describe("task routes", () => {
 
     expect(createResponse.status).toBe(201);
     expect(created.task.title).toBe("Create task");
-    expect(emit).toHaveBeenCalledWith(
-      SOCKET_EVENTS.taskCreated,
-      expect.objectContaining({
-        task: expect.objectContaining({
-          id: created.task.id,
-        }),
-      }),
-    );
 
     const updateResponse = await PATCH(
       new Request(`http://localhost/api/tasks/${created.task.id}`, {
@@ -73,16 +55,23 @@ describe("task routes", () => {
     );
 
     const updated = (await updateResponse.json()) as { task: { title: string } };
+    const persistedTask = await prisma.task.findUniqueOrThrow({
+      where: {
+        id: created.task.id,
+      },
+    });
+    const activities = await prisma.activity.findMany({
+      orderBy: {
+        createdAt: "asc",
+      },
+    });
 
     expect(updated.task.title).toBe("Updated task");
-    expect(emit).toHaveBeenCalledWith(
-      SOCKET_EVENTS.taskUpdated,
-      expect.objectContaining({
-        task: expect.objectContaining({
-          title: "Updated task",
-        }),
-      }),
-    );
+    expect(persistedTask.title).toBe("Updated task");
+    expect(activities.map((activity) => activity.type)).toEqual([
+      "TASK_CREATED",
+      "TASK_UPDATED",
+    ]);
   });
 
   it("moves and reorders tasks with persisted ordering", async () => {
@@ -148,12 +137,7 @@ describe("task routes", () => {
     expect(inProgressColumn?.tasks.map((task) => task.title)).toEqual(["First"]);
   });
 
-  it("deletes a task and emits a persisted delete activity", async () => {
-    const emit = vi.fn();
-    globalThis.__boardSocketServer = {
-      emit,
-    } as never;
-
+  it("deletes a task and persists delete activity", async () => {
     const actor = await prisma.user.findFirstOrThrow();
 
     const createResponse = await createTaskRoute(
@@ -193,12 +177,6 @@ describe("task routes", () => {
     expect(deleted.deletedTaskId).toBe(created.task.id);
     expect(deleted.activity.type).toBe("TASK_DELETED");
     expect(deleted.activity.message).toContain("deleted");
-    expect(emit).toHaveBeenCalledWith(
-      SOCKET_EVENTS.taskDeleted,
-      expect.objectContaining({
-        deletedTaskId: created.task.id,
-      }),
-    );
 
     const deletedTask = await prisma.task.findUnique({
       where: {

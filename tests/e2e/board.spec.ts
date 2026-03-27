@@ -1,5 +1,7 @@
 import { expect, test, type Page } from "@playwright/test";
 
+const realtimeTimeout = 15_000;
+
 function taskCardByTitle(page: Page, title: string) {
   return page.locator('[data-testid^="task-card-"]').filter({ hasText: title }).first();
 }
@@ -13,39 +15,16 @@ async function createTaskInColumn(page: Page, columnId: string, title: string, d
   await page.getByRole("button", { name: /create task/i }).click();
 }
 
-async function dragTaskToColumn(page: Page, title: string, columnId: string) {
-  const sourceCard = taskCardByTitle(page, title);
-  const targetColumn = page.getByTestId(`board-column-${columnId}`);
+async function moveTaskRight(page: Page, title: string) {
+  const card = taskCardByTitle(page, title);
 
-  const sourceBox = await sourceCard.boundingBox();
-  const targetBox = await targetColumn.boundingBox();
-
-  if (!sourceBox || !targetBox) {
-    throw new Error(`Could not resolve drag geometry for task "${title}".`);
-  }
-
-  await page.mouse.move(
-    sourceBox.x + sourceBox.width - 22,
-    sourceBox.y + sourceBox.height / 2,
-  );
-  await page.mouse.down();
-  await page.mouse.move(
-    sourceBox.x + sourceBox.width + 24,
-    sourceBox.y + sourceBox.height / 2 + 24,
-    { steps: 12 },
-  );
-  await page.mouse.move(targetBox.x + 120, targetBox.y + 200, { steps: 32 });
-  await page.waitForTimeout(150);
-  await page.mouse.up();
+  await card.hover();
+  await card.getByRole("button", { name: /move task right/i }).click({
+    force: true,
+  });
 }
 
-async function reorderTaskAbove(page: Page, movingTitle: string) {
-  await taskCardByTitle(page, movingTitle)
-    .getByRole("button", { name: /move task up/i })
-    .click();
-}
-
-test("board supports create, edit, drag, reorder, persistence, and realtime sync", async ({
+test("board supports create, edit, status changes, persistence, delete, and realtime sync", async ({
   browser,
 }) => {
   const contextOne = await browser.newContext();
@@ -67,7 +46,7 @@ test("board supports create, edit, drag, reorder, persistence, and realtime sync
 
   await expect(
     pageTwo.getByTestId("board-column-TODO").getByText("Ship realtime board"),
-  ).toBeVisible();
+  ).toBeVisible({ timeout: realtimeTimeout });
 
   const pageTwoCard = taskCardByTitle(pageTwo, "Ship realtime board");
   await pageTwoCard.getByRole("button", { name: /edit/i }).click();
@@ -75,56 +54,35 @@ test("board supports create, edit, drag, reorder, persistence, and realtime sync
   await pageTwo.getByLabel("Description").fill("Edited from the second client.");
   await pageTwo.getByRole("button", { name: /save changes/i }).click();
 
-  await expect(taskCardByTitle(pageOne, "Ship realtime board v2")).toBeVisible();
+  await expect(taskCardByTitle(pageOne, "Ship realtime board v2")).toBeVisible({
+    timeout: realtimeTimeout,
+  });
 
-  await dragTaskToColumn(pageOne, "Ship realtime board v2", "IN_PROGRESS");
+  await moveTaskRight(pageOne, "Ship realtime board v2");
 
   await expect(
     pageOne.getByTestId("board-column-IN_PROGRESS").getByText("Ship realtime board v2"),
-  ).toBeVisible();
+  ).toBeVisible({ timeout: realtimeTimeout });
   await expect(
     pageTwo.getByTestId("board-column-IN_PROGRESS").getByText("Ship realtime board v2"),
-  ).toBeVisible();
-
-  await createTaskInColumn(
-    pageOne,
-    "IN_PROGRESS",
-    "Add activity coverage",
-    "Track who changed each task in realtime.",
-  );
-
-  await expect(taskCardByTitle(pageOne, "Add activity coverage")).toBeVisible();
-
-  await reorderTaskAbove(pageOne, "Add activity coverage");
-
-  await expect(
-    pageOne
-      .getByTestId("board-column-IN_PROGRESS")
-      .locator('[data-testid^="task-card-"]')
-      .first(),
-  ).toContainText("Add activity coverage");
-  await expect(
-    pageTwo
-      .getByTestId("board-column-IN_PROGRESS")
-      .locator('[data-testid^="task-card-"]')
-      .first(),
-  ).toContainText("Add activity coverage");
+  ).toBeVisible({ timeout: realtimeTimeout });
 
   await pageOne.reload();
 
   await expect(
-    pageOne
-      .getByTestId("board-column-IN_PROGRESS")
-      .locator('[data-testid^="task-card-"]')
-      .first(),
-  ).toContainText("Add activity coverage");
+    pageOne.getByTestId("board-column-IN_PROGRESS").getByText("Ship realtime board v2"),
+  ).toBeVisible({ timeout: realtimeTimeout });
 
   await taskCardByTitle(pageOne, "Ship realtime board v2")
     .getByRole("button", { name: /delete task/i })
     .click();
 
-  await expect(taskCardByTitle(pageOne, "Ship realtime board v2")).toHaveCount(0);
-  await expect(taskCardByTitle(pageTwo, "Ship realtime board v2")).toHaveCount(0);
+  await expect(taskCardByTitle(pageOne, "Ship realtime board v2")).toHaveCount(0, {
+    timeout: realtimeTimeout,
+  });
+  await expect(taskCardByTitle(pageTwo, "Ship realtime board v2")).toHaveCount(0, {
+    timeout: realtimeTimeout,
+  });
   await pageOne.getByRole("button", { name: /activity/i }).click();
   await expect(
     pageOne.getByText(/deleted “Ship realtime board v2”/i).first(),

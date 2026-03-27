@@ -1,9 +1,9 @@
 import { mapBoardSnapshot } from "@/features/tasks/lib/task-mappers";
 import { prisma } from "@/lib/db/prisma";
-import { ensureDefaultUsers } from "@/lib/db/seed";
+import { listUsers } from "@/lib/db/queries/users";
 
 export async function getBoardSnapshot() {
-  const users = await ensureDefaultUsers();
+  const users = await listUsers();
 
   const [tasks, activities] = await Promise.all([
     prisma.task.findMany({

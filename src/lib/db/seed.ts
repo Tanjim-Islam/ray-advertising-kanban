@@ -1,3 +1,6 @@
+import { ActivityType, type TaskStatus } from "@prisma/client";
+
+import { ORDER_INCREMENT } from "@/features/tasks/lib/task-utils";
 import type { DatabaseClient } from "@/lib/db/prisma";
 import { prisma } from "@/lib/db/prisma";
 
@@ -27,6 +30,50 @@ const LEGACY_NAME_MAP: Record<string, (typeof DEFAULT_USERS)[number]> = {
   "Ivy Chen": DEFAULT_USERS[1],
   "Noah Brooks": DEFAULT_USERS[2],
 };
+
+const DEFAULT_TASKS = [
+  {
+    title: "Design system audit",
+    description: "Review typography, spacing, and color tokens across all components.",
+    status: "TODO" as TaskStatus,
+    assigneeName: "Ifad",
+  },
+  {
+    title: "Activity feed polish",
+    description: "Refine motion timing and improve readability in the activity rail.",
+    status: "IN_PROGRESS" as TaskStatus,
+    assigneeName: "Abrar",
+  },
+  {
+    title: "API integration",
+    description: "Connect the board UI to the production-ready task endpoints.",
+    status: "DONE" as TaskStatus,
+    assigneeName: "Tanjim",
+  },
+] as const;
+
+export function sortUsersByDefaultOrder<T extends { name: string }>(users: T[]) {
+  const preferredOrder = DEFAULT_USERS.map((user) => user.name);
+
+  return [...users].sort((left, right) => {
+    const leftIndex = preferredOrder.findIndex((name) => name === left.name);
+    const rightIndex = preferredOrder.findIndex((name) => name === right.name);
+
+    if (leftIndex >= 0 && rightIndex >= 0) {
+      return leftIndex - rightIndex;
+    }
+
+    if (leftIndex >= 0) {
+      return -1;
+    }
+
+    if (rightIndex >= 0) {
+      return 1;
+    }
+
+    return left.name.localeCompare(right.name);
+  });
+}
 
 export async function ensureDefaultUsers(client: DatabaseClient = prisma) {
   const existingUsers = await client.user.findMany();
@@ -67,24 +114,46 @@ export async function ensureDefaultUsers(client: DatabaseClient = prisma) {
   );
 
   const users = await client.user.findMany();
-  const preferredOrder = DEFAULT_USERS.map((user) => user.name);
 
-  return users.sort((left, right) => {
-    const leftIndex = preferredOrder.findIndex((name) => name === left.name);
-    const rightIndex = preferredOrder.findIndex((name) => name === right.name);
+  return sortUsersByDefaultOrder(users);
+}
 
-    if (leftIndex >= 0 && rightIndex >= 0) {
-      return leftIndex - rightIndex;
+export async function ensureSampleBoard(client: DatabaseClient = prisma) {
+  const users = await ensureDefaultUsers(client);
+  const existingTaskCount = await client.task.count();
+
+  if (existingTaskCount > 0) {
+    return;
+  }
+
+  for (const [index, task] of DEFAULT_TASKS.entries()) {
+    const actor = users.find((user) => user.name === task.assigneeName) ?? users[0];
+
+    if (!actor) {
+      continue;
     }
 
-    if (leftIndex >= 0) {
-      return -1;
-    }
+    const createdTask = await client.task.create({
+      data: {
+        title: task.title,
+        description: task.description,
+        status: task.status,
+        order: (index + 1) * ORDER_INCREMENT,
+        createdByUserId: actor.id,
+        updatedByUserId: actor.id,
+      },
+    });
 
-    if (rightIndex >= 0) {
-      return 1;
-    }
-
-    return left.name.localeCompare(right.name);
-  });
+    await client.activity.create({
+      data: {
+        type: ActivityType.TASK_CREATED,
+        taskId: createdTask.id,
+        userId: actor.id,
+        payload: JSON.stringify({
+          status: task.status,
+          title: task.title,
+        }),
+      },
+    });
+  }
 }

@@ -1,11 +1,11 @@
 import { PrismaClient } from "@prisma/client";
 
-import { ensureDefaultUsers } from "../src/lib/db/seed";
+import { ensureSampleBoard } from "../src/lib/db/seed";
 
 const prisma = new PrismaClient();
 
 async function main() {
-  await ensureDefaultUsers(prisma);
+  await ensureSampleBoard(prisma);
 }
 
 void main()

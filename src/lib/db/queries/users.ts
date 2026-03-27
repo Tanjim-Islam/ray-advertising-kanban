@@ -1,11 +1,18 @@
 import { type User } from "@prisma/client";
 
 import { mapUserToSummary } from "@/features/tasks/lib/task-mappers";
-import { ensureDefaultUsers } from "@/lib/db/seed";
+import { prisma } from "@/lib/db/prisma";
+import { sortUsersByDefaultOrder } from "@/lib/db/seed";
 import { ApiError } from "@/lib/http/api-response";
 
+export async function listUsers() {
+  const users = await prisma.user.findMany();
+
+  return sortUsersByDefaultOrder(users);
+}
+
 export async function getUsers() {
-  const users = await ensureDefaultUsers();
+  const users = await listUsers();
 
   return users.map(mapUserToSummary);
 }

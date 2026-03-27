@@ -10,8 +10,8 @@ import {
   removeTask,
   upsertTask,
 } from "@/features/tasks/lib/task-utils";
+import type { TaskMutationResponse } from "@/features/tasks/types/api";
 import type { BoardSnapshot } from "@/features/tasks/types/board";
-import type { TaskMutationPayload } from "@/lib/realtime/events";
 
 export type RealtimeStatus = "connecting" | "connected" | "disconnected";
 
@@ -26,7 +26,7 @@ export interface BoardStoreState {
   connectionStatus: RealtimeStatus;
   isMutating: boolean;
   lastError: string | null;
-  applyMutation: (payload: TaskMutationPayload) => void;
+  applyMutation: (payload: TaskMutationResponse) => void;
   replaceSnapshot: (snapshot: Pick<BoardSnapshot, "activities" | "columns">) => void;
   restoreBoard: (snapshot: BoardStoreSnapshot) => void;
   setConnectionStatus: (status: RealtimeStatus) => void;

@@ -1,11 +1,13 @@
 import { afterAll, beforeEach, describe, expect, it } from "vitest";
 
 import { GET } from "@/app/api/board/route";
+import { ensureDefaultUsers } from "@/lib/db/seed";
 import { disconnectDatabase, resetDatabase } from "../setup/test-db";
 
 describe("board route", () => {
   beforeEach(async () => {
     await resetDatabase();
+    await ensureDefaultUsers();
   });
 
   afterAll(async () => {

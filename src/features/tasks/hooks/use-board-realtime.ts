@@ -1,98 +1,120 @@
 "use client";
 
-import { startTransition, useEffect, useEffectEvent } from "react";
+import type { RealtimeChannel } from "@supabase/supabase-js";
+import { startTransition, useEffect, useEffectEvent, useRef } from "react";
 
+import { getBoard } from "@/features/tasks/api/get-board";
+import type { TaskMutationResponse } from "@/features/tasks/types/api";
 import { useBoardStoreApi } from "@/features/tasks/store/board-store";
 import { useUserStore, useUserStoreApi } from "@/features/tasks/store/user-store";
-import type {
-  BoardHydratedPayload,
-  PresenceUpdatedPayload,
-  TaskMutationPayload,
-} from "@/lib/realtime/events";
-import { SOCKET_EVENTS } from "@/lib/realtime/events";
-import { getSocketClient } from "@/lib/realtime/socket-client";
+import { getSupabaseBrowserClient } from "@/lib/supabase/browser-client";
+import {
+  BOARD_REALTIME_EVENT,
+  getBoardRealtimeChannel,
+} from "@/lib/supabase/events";
 
-export function useBoardRealtime() {
+function collectOnlineUserIds(channel: RealtimeChannel) {
+  const presenceState = channel.presenceState<{ userId?: string }>();
+
+  return [...new Set(
+    Object.values(presenceState)
+      .flat()
+      .map((presence) => presence.userId)
+      .filter((value): value is string => Boolean(value)),
+  )];
+}
+
+export function useBoardRealtime({ schema }: { schema: string }) {
   const boardStore = useBoardStoreApi();
   const userStore = useUserStoreApi();
   const currentUserId = useUserStore((state) => state.currentUserId);
+  const presenceKeyRef = useRef(`presence-${crypto.randomUUID()}`);
 
-  const applySnapshot = useEffectEvent((payload: BoardHydratedPayload) => {
-    startTransition(() => {
-      boardStore.getState().replaceSnapshot(payload.snapshot);
-      userStore.getState().setUsers(payload.snapshot.users);
-    });
+  const applySnapshot = useEffectEvent(
+    (snapshot: Awaited<ReturnType<typeof getBoard>>["snapshot"]) => {
+      startTransition(() => {
+        boardStore.getState().replaceSnapshot(snapshot);
+        userStore.getState().setUsers(snapshot.users);
+      });
+    },
+  );
+
+  const refreshSnapshot = useEffectEvent(async () => {
+    const response = await getBoard();
+    applySnapshot(response.snapshot);
   });
 
-  const applyMutation = useEffectEvent((payload: TaskMutationPayload) => {
+  const syncPresence = useEffectEvent((channel: RealtimeChannel) => {
+    userStore.getState().setOnlineUserIds(collectOnlineUserIds(channel));
+  });
+
+  const applyRealtimeMutation = useEffectEvent((payload: TaskMutationResponse) => {
     startTransition(() => {
       boardStore.getState().applyMutation(payload);
     });
   });
 
-  const applyPresence = useEffectEvent((payload: PresenceUpdatedPayload) => {
-    userStore.getState().setOnlineUserIds(payload.onlineUserIds);
-  });
-
   useEffect(() => {
-    const socket = getSocketClient();
+    const supabase = getSupabaseBrowserClient();
+    const channel = supabase.channel(getBoardRealtimeChannel(schema), {
+      config: {
+        presence: {
+          key: presenceKeyRef.current,
+        },
+      },
+    });
 
-    const handleConnect = () => {
-      boardStore.getState().setConnectionStatus("connected");
+    boardStore.getState().setConnectionStatus("connecting");
 
-      if (currentUserId) {
-        socket.emit(SOCKET_EVENTS.userChanged, {
-          userId: currentUserId,
-        });
-      }
-    };
+    channel
+      .on(
+        "broadcast",
+        {
+          event: BOARD_REALTIME_EVENT,
+        },
+        ({ payload }) => {
+          applyRealtimeMutation(payload as TaskMutationResponse);
+        },
+      )
+      .on("presence", { event: "sync" }, () => {
+        syncPresence(channel);
+      })
+      .on("presence", { event: "join" }, () => {
+        syncPresence(channel);
+      })
+      .on("presence", { event: "leave" }, () => {
+        syncPresence(channel);
+      })
+      .subscribe(async (status) => {
+        if (status === "SUBSCRIBED") {
+          boardStore.getState().setConnectionStatus("connected");
 
-    const handleDisconnect = () => {
-      boardStore.getState().setConnectionStatus("disconnected");
-    };
+          if (currentUserId) {
+            await channel.track({
+              userId: currentUserId,
+            });
+          } else {
+            userStore.getState().setOnlineUserIds([]);
+          }
 
-    socket.on("connect", handleConnect);
-    socket.on("disconnect", handleDisconnect);
-    socket.on(SOCKET_EVENTS.boardHydrated, applySnapshot);
-    socket.on(SOCKET_EVENTS.taskCreated, applyMutation);
-    socket.on(SOCKET_EVENTS.taskUpdated, applyMutation);
-    socket.on(SOCKET_EVENTS.taskMoved, applyMutation);
-    socket.on(SOCKET_EVENTS.taskReordered, applyMutation);
-    socket.on(SOCKET_EVENTS.taskDeleted, applyMutation);
-    socket.on(SOCKET_EVENTS.presenceUpdated, applyPresence);
+          void refreshSnapshot().catch(() => undefined);
+          return;
+        }
 
-    boardStore.getState().setConnectionStatus(
-      socket.connected ? "connected" : "connecting",
-    );
-
-    if (!socket.connected) {
-      socket.connect();
-    } else if (currentUserId) {
-      socket.emit(SOCKET_EVENTS.userChanged, {
-        userId: currentUserId,
+        if (
+          status === "CHANNEL_ERROR" ||
+          status === "TIMED_OUT" ||
+          status === "CLOSED"
+        ) {
+          boardStore.getState().setConnectionStatus("disconnected");
+          userStore.getState().setOnlineUserIds([]);
+        }
       });
-    }
 
     return () => {
-      socket.off("connect", handleConnect);
-      socket.off("disconnect", handleDisconnect);
-      socket.off(SOCKET_EVENTS.boardHydrated, applySnapshot);
-      socket.off(SOCKET_EVENTS.taskCreated, applyMutation);
-      socket.off(SOCKET_EVENTS.taskUpdated, applyMutation);
-      socket.off(SOCKET_EVENTS.taskMoved, applyMutation);
-      socket.off(SOCKET_EVENTS.taskReordered, applyMutation);
-      socket.off(SOCKET_EVENTS.taskDeleted, applyMutation);
-      socket.off(SOCKET_EVENTS.presenceUpdated, applyPresence);
+      userStore.getState().setOnlineUserIds([]);
+      boardStore.getState().setConnectionStatus("connecting");
+      void supabase.removeChannel(channel);
     };
-  }, [boardStore, currentUserId]);
-
-  useEffect(() => {
-    const socket = getSocketClient();
-
-    if (socket.connected && currentUserId) {
-      socket.emit(SOCKET_EVENTS.userChanged, {
-        userId: currentUserId,
-      });
-    }
-  }, [currentUserId]);
+  }, [boardStore, currentUserId, schema, userStore]);
 }

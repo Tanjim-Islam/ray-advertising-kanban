@@ -75,7 +75,7 @@ type ViewTransitionDocument = Document & {
   };
 };
 
-async function runWithViewTransition(action: () => Promise<void>) {
+async function runWithViewTransition(action: () => Promise<void> | void) {
   if (
     typeof document === "undefined" ||
     window.matchMedia("(prefers-reduced-motion: reduce)").matches
@@ -96,6 +96,18 @@ async function runWithViewTransition(action: () => Promise<void>) {
   });
 
   await transition.finished.catch(() => undefined);
+}
+
+async function runWithOptimisticTransition(action: () => Promise<void>) {
+  let pendingAction: Promise<void> | null = null;
+
+  await runWithViewTransition(() => {
+    pendingAction = action();
+  });
+
+  if (pendingAction) {
+    await pendingAction;
+  }
 }
 
 function getDragPosition(
@@ -214,7 +226,7 @@ function ThemeToggle() {
   );
 }
 
-function BoardSurface() {
+function BoardSurface({ realtimeSchema }: { realtimeSchema: string }) {
   const columns = useBoardStore((state) => state.columns);
   const activities = useBoardStore((state) => state.activities);
   const connectionStatus = useBoardStore((state) => state.connectionStatus);
@@ -243,7 +255,9 @@ function BoardSurface() {
   const lastOverIdRef = useRef<string | null>(null);
   const recentlyMovedToNewColumnRef = useRef(false);
 
-  useBoardRealtime();
+  useBoardRealtime({
+    schema: realtimeSchema,
+  });
 
   useEffect(() => {
     if (!activeTaskId) {
@@ -416,24 +430,24 @@ function BoardSurface() {
       return;
     }
 
-    setActiveTaskId(null);
-
     try {
-      await runWithViewTransition(async () => {
-        if (sourceLocation.column.id === destinationLocation.column.id) {
-          await reorderTask({
-            taskId: activeId,
-            status: destinationLocation.column.id,
-            toIndex: destinationLocation.taskIndex,
-          });
-          return;
-        }
+      await runWithOptimisticTransition(() => {
+        const pendingMutation =
+          sourceLocation.column.id === destinationLocation.column.id
+            ? reorderTask({
+                taskId: activeId,
+                status: destinationLocation.column.id,
+                toIndex: destinationLocation.taskIndex,
+              })
+            : moveTask({
+                taskId: activeId,
+                toStatus: destinationLocation.column.id,
+                toIndex: destinationLocation.taskIndex,
+              });
 
-        await moveTask({
-          taskId: activeId,
-          toStatus: destinationLocation.column.id,
-          toIndex: destinationLocation.taskIndex,
-        });
+        resetDragState();
+
+        return pendingMutation;
       });
     } finally {
       resetDragState();
@@ -476,26 +490,24 @@ function BoardSurface() {
       return;
     }
 
-    await runWithViewTransition(async () => {
+    await runWithOptimisticTransition(() => {
       if (direction === "up" && location.taskIndex > 0) {
-        await reorderTask({
+        return reorderTask({
           taskId: task.id,
           status: location.column.id,
           toIndex: location.taskIndex - 1,
         });
-        return;
       }
 
       if (
         direction === "down" &&
         location.taskIndex < location.column.tasks.length - 1
       ) {
-        await reorderTask({
+        return reorderTask({
           taskId: task.id,
           status: location.column.id,
           toIndex: location.taskIndex + 1,
         });
-        return;
       }
 
       const statusIndex = BOARD_STATUS_ORDER.indexOf(location.column.id);
@@ -507,12 +519,12 @@ function BoardSurface() {
             : undefined;
 
       if (!targetStatus) {
-        return;
+        return Promise.resolve();
       }
 
       const targetColumn = columns.find((column) => column.id === targetStatus);
 
-      await moveTask({
+      return moveTask({
         taskId: task.id,
         toStatus: targetStatus,
         toIndex: targetColumn?.tasks.length ?? 0,
@@ -808,11 +820,17 @@ function BoardSurface() {
   );
 }
 
-export function Board({ initialSnapshot }: { initialSnapshot: BoardSnapshot }) {
+export function Board({
+  initialSnapshot,
+  realtimeSchema,
+}: {
+  initialSnapshot: BoardSnapshot;
+  realtimeSchema: string;
+}) {
   return (
     <BoardStoreProvider snapshot={initialSnapshot}>
       <UserStoreProvider users={initialSnapshot.users}>
-        <BoardSurface />
+        <BoardSurface realtimeSchema={realtimeSchema} />
       </UserStoreProvider>
     </BoardStoreProvider>
   );

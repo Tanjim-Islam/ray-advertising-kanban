@@ -1,7 +1,7 @@
 import { deleteTask, updateTask } from "@/lib/db/mutations/tasks";
 import { handleRouteError, jsonResponse, parseJsonBody } from "@/lib/http/api-response";
-import { SOCKET_EVENTS } from "@/lib/realtime/events";
-import { emitSocketEvent } from "@/lib/realtime/socket-server";
+import { broadcastTaskMutation } from "@/lib/supabase/broadcast";
+import { logger } from "@/lib/utils/logger";
 import { deleteTaskSchema, updateTaskSchema } from "@/lib/validations/task";
 
 export const runtime = "nodejs";
@@ -16,7 +16,11 @@ export async function PATCH(
     const input = await parseJsonBody(request, updateTaskSchema);
     const result = await updateTask(id, input);
 
-    emitSocketEvent(SOCKET_EVENTS.taskUpdated, result);
+    try {
+      await broadcastTaskMutation(result);
+    } catch (error) {
+      logger.warn("Failed to broadcast updated task mutation.", error);
+    }
 
     return jsonResponse(result);
   } catch (error) {
@@ -33,7 +37,11 @@ export async function DELETE(
     const input = await parseJsonBody(request, deleteTaskSchema);
     const result = await deleteTask(id, input);
 
-    emitSocketEvent(SOCKET_EVENTS.taskDeleted, result);
+    try {
+      await broadcastTaskMutation(result);
+    } catch (error) {
+      logger.warn("Failed to broadcast deleted task mutation.", error);
+    }
 
     return jsonResponse(result);
   } catch (error) {

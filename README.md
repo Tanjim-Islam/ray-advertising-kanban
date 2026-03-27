@@ -1,28 +1,27 @@
 # Ray Board
 
-Ray Board is a production-minded mini Kanban board built with Next.js App Router, TypeScript, Tailwind CSS, Prisma, SQLite, Zustand, dnd-kit, Socket.IO, and Playwright.
+Ray Board is a production-minded Kanban board built with Next.js App Router, TypeScript, Tailwind CSS, Prisma, Supabase Postgres, Supabase Realtime, Zustand, dnd-kit, and Playwright.
 
-It delivers:
+It includes:
 
 - 3 fixed lanes: `To Do`, `In Progress`, `Done`
-- task creation and editing
-- drag-and-drop lane moves
-- drag-and-drop same-lane reordering
-- realtime multi-session sync
-- SQLite persistence through Prisma
+- task creation, editing, deletion, and drag-and-drop ordering
+- realtime multi-session sync through Supabase Realtime
+- persistent data in Supabase Postgres through Prisma
 - simulated user switching without full authentication
-- automated unit, integration, and end-to-end coverage
+- unit, integration, and end-to-end coverage
+- a Vercel-friendly runtime with no custom server
 
 ## Stack
 
 - Next.js 16 App Router
 - TypeScript with strict mode
 - Tailwind CSS 4
-- Material UI 7 for the task dialog only
-- Prisma + SQLite
+- Material UI 7 for the task dialog
+- Prisma + Supabase Postgres
+- Supabase Realtime
 - Zustand
 - dnd-kit
-- Socket.IO
 - Vitest
 - Playwright
 
@@ -40,19 +39,21 @@ npm install
 copy .env.example .env
 ```
 
-3. Apply the Prisma migration:
+3. Fill in the Supabase database and public realtime values in `.env`.
+
+4. Apply the Prisma migrations:
 
 ```bash
 npm run prisma:migrate
 ```
 
-4. Seed the simulated collaborators:
+5. Seed the collaborators and starter board:
 
 ```bash
 npm run prisma:seed
 ```
 
-5. Start the app:
+6. Start the app:
 
 ```bash
 npm run dev
@@ -65,13 +66,22 @@ The local app runs at [http://127.0.0.1:3000](http://127.0.0.1:3000).
 `.env.example`
 
 ```env
-DATABASE_URL="file:./dev.db"
+DATABASE_URL="postgresql://postgres.<project-ref>:[YOUR-PASSWORD]@aws-<region>.pooler.supabase.com:6543/postgres?pgbouncer=true&sslmode=require&schema=public"
+DIRECT_URL="postgresql://postgres.<project-ref>:[YOUR-PASSWORD]@aws-<region>.pooler.supabase.com:5432/postgres?sslmode=require&schema=public"
+SUPABASE_DB_SCHEMA="public"
+NEXT_PUBLIC_SUPABASE_URL="https://<project-ref>.supabase.co"
+NEXT_PUBLIC_SUPABASE_PUBLISHABLE_DEFAULT_KEY="<your-supabase-publishable-key>"
+SUPABASE_SERVICE_ROLE_KEY="<your-supabase-service-role-key>"
 ```
 
 Notes:
 
-- Prisma reads `DATABASE_URL` for all runtime queries and migrations.
-- Test and E2E scripts override `DATABASE_URL` so they use isolated SQLite files.
+- `DATABASE_URL` is the pooled runtime connection used by Prisma in the app.
+- `DIRECT_URL` is used by Prisma migrations.
+- `SUPABASE_DB_SCHEMA` controls the schema name used for realtime subscriptions. The app defaults to `public`.
+- `NEXT_PUBLIC_SUPABASE_URL` and `NEXT_PUBLIC_SUPABASE_PUBLISHABLE_DEFAULT_KEY` are used by the browser realtime client.
+- `SUPABASE_SERVICE_ROLE_KEY` is used server-side to broadcast task mutation payloads through Supabase Realtime without waiting on a database change feed.
+- Integration tests use an isolated schema inside the same Supabase database, and Playwright reseeds the configured app schema before browser validation. No local SQLite files are used anywhere.
 
 ## Runbook
 
@@ -88,7 +98,15 @@ npm run build
 npm run start
 ```
 
-Core checks:
+Database:
+
+```bash
+npm run prisma:migrate
+npm run prisma:reset
+npm run prisma:seed
+```
+
+Validation:
 
 ```bash
 npm run lint
@@ -104,37 +122,31 @@ Prisma models:
 
 - `User`: simulated collaborators with name, role, color, and initials
 - `Task`: title, description, status, stable order, timestamps, and user references
-- `Activity`: task mutation history used for the realtime activity feed
+- `Activity`: task mutation history used by the activity feed
 
 Persistence rules:
 
 - all reads and writes go through Prisma
 - task ordering is stored explicitly with an `order` field
-- users are seeded idempotently
+- database setup is managed with Prisma migrations
+- seeded collaborators and starter tasks are inserted idempotently
 - there is no frontend-only board data source
-
-Migration files live in `prisma/migrations/`.
 
 ## Architecture
 
-The app uses a custom Node server because Socket.IO needs a shared HTTP server.
-
-- `server.ts`
-  - boots Next.js
-  - attaches Socket.IO on `/socket.io`
-  - hydrates new socket clients with the board snapshot
-  - broadcasts presence updates for simulated users
 - `app/`
   - App Router entrypoint and route handlers
   - server-rendered initial board fetch
 - `src/components/board/`
   - Kanban UI, task cards, dialog, activity feed, and user switcher
 - `src/features/tasks/`
-  - domain types, API clients, DnD/reorder helpers, hooks, and Zustand stores
+  - domain types, API clients, hooks, drag helpers, and Zustand stores
 - `src/lib/db/`
   - Prisma client, board queries, user queries, and task mutation transactions
-- `src/lib/realtime/`
-  - typed socket events, client connection, and server registry
+- `src/lib/supabase/`
+  - browser Supabase client for realtime subscriptions and presence
+- `scripts/with-db-schema-env.ts`
+  - isolated schema wrapper for tests and local E2E runs
 - `tests/`
   - `unit/` pure utilities and validation
   - `integration/` route handler and persistence behavior
@@ -152,36 +164,25 @@ Zustand is split by concern:
   - rollback support
 - `user-store`
   - simulated user identity
-  - online user presence
+  - presence indicators
   - localStorage persistence for the current user
 
 Server communication stays in hooks and API helpers, not in presentational components.
 
-## Realtime Flow
+## Realtime
 
-1. The client applies an optimistic update through the board store.
-2. A route handler validates the request with Zod.
-3. Prisma writes the change inside a transaction.
-4. The server emits a typed Socket.IO event after persistence succeeds.
-5. All clients reconcile from the server-confirmed payload.
+Realtime is driven by Supabase instead of a custom WebSocket server.
 
-Socket events:
+Flow:
 
-- `board:hydrated`
-- `task:created`
-- `task:updated`
-- `task:moved`
-- `task:reordered`
-- `user:changed`
-- `presence:updated`
+1. The client applies an optimistic update in the board store.
+2. A Next.js route handler validates the request with Zod.
+3. Prisma writes the change to Supabase Postgres inside a transaction.
+4. The route handler broadcasts the exact mutation payload through Supabase Realtime Broadcast.
+5. Connected clients apply that payload directly to the board store instead of refetching the whole board.
+6. Presence is tracked through a Supabase Realtime channel and mapped to the simulated user list.
 
-## Drag and Drop
-
-dnd-kit powers the board interactions.
-
-- cross-column movement is handled through pointer-based collision detection with a `closestCorners` fallback
-- same-column reorder persists the updated order to SQLite
-- keyboard-friendly directional move controls are also exposed on each task card as an accessibility and testing fallback
+This keeps cross-session updates tighter than a `postgres_changes -> refetch /api/board` loop and preserves the optimistic feel for the initiating client.
 
 ## Testing
 
@@ -189,9 +190,9 @@ Automated coverage includes:
 
 - unit tests for reorder logic, task utilities, and validation
 - integration tests for board routes, task routes, and persistence behavior
-- Playwright E2E for create, edit, drag between columns, reorder within a column, persistence after reload, and realtime propagation across two browser contexts
+- Playwright E2E for core browser flows including create, edit, status changes, persistence after reload, delete flows, and multi-session realtime sync
 
-The E2E suite runs against the real custom Socket.IO server and SQLite-backed API.
+Integration tests use an isolated Supabase schema. The Playwright run reseeds the configured app schema to validate the same realtime wiring used by the app runtime.
 
 ## Folder Structure
 
@@ -210,6 +211,8 @@ prisma/
   migrations/
   schema.prisma
   seed.ts
+scripts/
+  with-db-schema-env.ts
 src/
   components/
   features/
@@ -219,29 +222,4 @@ tests/
   integration/
   setup/
   unit/
-server.ts
 ```
-
-## Trade-offs and Assumptions
-
-- The board uses simulated users instead of authentication because the assignment only requires clear multi-user behavior.
-- Material UI is intentionally limited to the task dialog where it improves form UX and accessibility.
-- The runtime App Router lives in root `app/` because this Next.js 16 project was initialized with that entrypoint already in place.
-- The Prisma reset scripts for test databases include `RUST_LOG=debug` because the schema engine was unstable without it in this local environment.
-- The app is designed for a single shared board with fixed statuses, which keeps the domain aligned with the assignment and the persistence model simpler.
-
-## Deployment Notes
-
-This project is not a static deployment.
-
-Because realtime depends on Socket.IO attached to `server.ts`, deploy it to a Node-capable host that supports long-running processes and WebSocket connections.
-
-Recommended deployment shape:
-
-1. Set `DATABASE_URL`.
-2. Run `npm install`.
-3. Run `npm run prisma:migrate`.
-4. Run `npm run build`.
-5. Run `npm run start`.
-
-If you deploy on a platform that does not support a custom Node server, the realtime architecture would need to be redesigned.
