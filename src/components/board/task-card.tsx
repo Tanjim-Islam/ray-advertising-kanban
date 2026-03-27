@@ -9,6 +9,7 @@ import type { TaskRecord } from "@/features/tasks/types/task";
 import { cn } from "@/lib/utils/cn";
 
 interface TaskCardBodyProps {
+  canDrag?: boolean;
   isDeleting?: boolean;
   isDragging?: boolean;
   moveControls?: {
@@ -18,7 +19,7 @@ interface TaskCardBodyProps {
     moveUp?: () => void;
   };
   onDelete?: (task: TaskRecord) => void;
-  onEdit: (task: TaskRecord) => void;
+  onEdit?: (task: TaskRecord) => void;
   task: TaskRecord;
 }
 
@@ -72,6 +73,7 @@ function MoveIcon({ d }: { d: string }) {
 }
 
 function TaskCardBody({
+  canDrag,
   isDeleting,
   isDragging,
   moveControls,
@@ -88,6 +90,7 @@ function TaskCardBody({
         isDragging && "shadow-lg ring-2 ring-[var(--accent-border)]",
         isDeleting && "pointer-events-none scale-[0.96] opacity-0",
         task.optimistic && "border-dashed border-[var(--accent-border)] bg-[var(--accent-subtle)]/60",
+        canDrag && "cursor-grab active:cursor-grabbing",
       )}
       data-testid={`task-card-${task.id}`}
     >
@@ -177,14 +180,16 @@ function TaskCardBody({
                 <MoveIcon d="M6 4l4 4-4 4" />
               </button>
             ) : null}
-            <button
-              type="button"
-              onClick={() => onEdit(task)}
-              className="ml-0.5 flex h-6 items-center rounded-md px-1.5 text-[11px] font-medium text-[var(--text-secondary)] transition hover:bg-[var(--surface-hover)] hover:text-[var(--text-primary)]"
-              {...nonDragRegionProps}
-            >
-              Edit
-            </button>
+            {onEdit ? (
+              <button
+                type="button"
+                onClick={() => onEdit(task)}
+                className="ml-0.5 flex h-6 items-center rounded-md px-1.5 text-[11px] font-medium text-[var(--text-secondary)] transition hover:bg-[var(--surface-hover)] hover:text-[var(--text-primary)]"
+                {...nonDragRegionProps}
+              >
+                Edit
+              </button>
+            ) : null}
             {onDelete ? (
               <button
                 type="button"
@@ -212,6 +217,7 @@ function TaskCardBody({
 }
 
 export function TaskCard({
+  canDrag = true,
   isDeleting = false,
   moveControls,
   onDelete,
@@ -219,19 +225,21 @@ export function TaskCard({
   overlay = false,
   task,
 }: {
+  canDrag?: boolean;
   isDeleting?: boolean;
   moveControls?: TaskCardBodyProps["moveControls"];
   onDelete?: (task: TaskRecord) => void;
-  onEdit: (task: TaskRecord) => void;
+  onEdit?: (task: TaskRecord) => void;
   overlay?: boolean;
   task: TaskRecord;
 }) {
   if (overlay) {
-    return <TaskCardBody task={task} onEdit={onEdit} isDragging />;
+    return <TaskCardBody task={task} onEdit={onEdit} isDragging canDrag={canDrag} />;
   }
 
   return (
     <SortableTaskCard
+      canDrag={canDrag}
       task={task}
       onEdit={onEdit}
       onDelete={onDelete}
@@ -242,27 +250,30 @@ export function TaskCard({
 }
 
 function SortableTaskCard({
+  canDrag,
   isDeleting,
   moveControls,
   onDelete,
   onEdit,
   task,
 }: {
+  canDrag?: boolean;
   isDeleting?: boolean;
   moveControls?: TaskCardBodyProps["moveControls"];
   onDelete?: (task: TaskRecord) => void;
-  onEdit: (task: TaskRecord) => void;
+  onEdit?: (task: TaskRecord) => void;
   task: TaskRecord;
 }) {
   const { isDragging, listeners, setNodeRef, transform, transition } =
     useSortable({
       id: task.id,
+      disabled: !canDrag || isDeleting,
     });
 
   return (
     <div
       ref={setNodeRef}
-      {...listeners}
+      {...(canDrag ? listeners : undefined)}
       style={{
         transform: CSS.Transform.toString(transform),
         transition,
@@ -270,11 +281,12 @@ function SortableTaskCard({
       }}
       className={cn(
         "will-change-transform",
-        !isDeleting && "cursor-grab active:cursor-grabbing",
+        canDrag && !isDeleting && "cursor-grab active:cursor-grabbing",
         isDragging && "opacity-50",
       )}
     >
       <TaskCardBody
+        canDrag={canDrag}
         task={task}
         onEdit={onEdit}
         onDelete={onDelete}

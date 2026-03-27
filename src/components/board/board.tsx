@@ -27,11 +27,13 @@ import {
 
 import { ActivityFeed } from "@/components/board/activity-feed";
 import { BoardColumn } from "@/components/board/board-column";
+import { RoleAccessGuide } from "@/components/board/role-access-guide";
 import { TaskCard } from "@/components/board/task-card";
 import { UserSwitcher } from "@/components/board/user-switcher";
 import { ErrorState } from "@/components/common/error-state";
 import { useColorMode } from "@/components/providers/app-providers";
 import { useBoardRealtime } from "@/features/tasks/hooks/use-board-realtime";
+import { getRoleAccess } from "@/features/tasks/lib/role-access";
 import { useTaskActions } from "@/features/tasks/hooks/use-task-actions";
 import { applyTaskMove } from "@/features/tasks/lib/reorder";
 import {
@@ -239,6 +241,7 @@ function BoardSurface({ realtimeSchema }: { realtimeSchema: string }) {
   const setCurrentUserId = useUserStore((state) => state.setCurrentUserId);
   const onlineUserIds = useUserStore((state) => state.onlineUserIds);
   const currentUser = useCurrentUser();
+  const currentUserAccess = getRoleAccess(currentUser?.role);
 
   const { createTask, deleteTask, moveTask, reorderTask, updateTask } =
     useTaskActions();
@@ -250,7 +253,9 @@ function BoardSurface({ realtimeSchema }: { realtimeSchema: string }) {
   const [deletingTaskIds, setDeletingTaskIds] = useState<Set<string>>(
     () => new Set(),
   );
-  const [showActivity, setShowActivity] = useState(false);
+  const [openPanel, setOpenPanel] = useState<"activity" | "roles" | null>(
+    null,
+  );
   const dragSnapshotRef = useRef<BoardSnapshot["columns"] | null>(null);
   const lastOverIdRef = useRef<string | null>(null);
   const recentlyMovedToNewColumnRef = useRef(false);
@@ -273,6 +278,17 @@ function BoardSurface({ realtimeSchema }: { realtimeSchema: string }) {
     };
   }, [activeTaskId, dragColumns]);
 
+  useEffect(() => {
+    if (dialogState?.mode === "create" && !currentUserAccess.createTask) {
+      setDialogState(null);
+      return;
+    }
+
+    if (dialogState?.mode === "edit" && !currentUserAccess.editTask) {
+      setDialogState(null);
+    }
+  }, [currentUserAccess.createTask, currentUserAccess.editTask, dialogState]);
+
   const sensors = useSensors(
     useSensor(MouseSensor, {
       activationConstraint: { distance: 8 },
@@ -291,6 +307,8 @@ function BoardSurface({ realtimeSchema }: { realtimeSchema: string }) {
 
   const totalTasks = columns.reduce((sum, col) => sum + col.tasks.length, 0);
   const isConnected = connectionStatus === "connected";
+  const showActivity = openPanel === "activity";
+  const showRoles = openPanel === "roles";
   const renderActivityPanel = () => (
     <ActivityFeed
       activities={activities}
@@ -299,6 +317,7 @@ function BoardSurface({ realtimeSchema }: { realtimeSchema: string }) {
       onlineUserIds={onlineUserIds}
     />
   );
+  const renderRolePanel = () => <RoleAccessGuide currentUser={currentUser} />;
 
   function clearDeleteState(taskId: string) {
     setDeletingTaskIds((current) => {
@@ -621,7 +640,18 @@ function BoardSurface({ realtimeSchema }: { realtimeSchema: string }) {
             <button
               type="button"
               onClick={() => setDialogState({ mode: "create", status: "TODO" })}
-              className="inline-flex items-center gap-1.5 rounded-md bg-[var(--accent)] px-3 py-1.5 text-xs font-medium text-white transition hover:bg-[var(--accent-hover)]"
+              disabled={!currentUserAccess.createTask}
+              title={
+                currentUserAccess.createTask
+                  ? "Create a new task"
+                  : "This role cannot create tasks."
+              }
+              className={cn(
+                "inline-flex items-center gap-1.5 rounded-md px-3 py-1.5 text-xs font-medium text-white transition",
+                currentUserAccess.createTask
+                  ? "bg-[var(--accent)] hover:bg-[var(--accent-hover)]"
+                  : "cursor-not-allowed bg-[var(--accent)]/50 opacity-60",
+              )}
             >
               <svg width="12" height="12" viewBox="0 0 16 16" fill="none">
                 <path
@@ -635,7 +665,36 @@ function BoardSurface({ realtimeSchema }: { realtimeSchema: string }) {
             </button>
             <button
               type="button"
-              onClick={() => setShowActivity((prev) => !prev)}
+              onClick={() =>
+                setOpenPanel((current) =>
+                  current === "roles" ? null : "roles",
+                )
+              }
+              className={cn(
+                "inline-flex items-center gap-1.5 rounded-md border px-3 py-1.5 text-xs font-medium transition",
+                showRoles
+                  ? "border-[var(--accent-border)] bg-[var(--accent-subtle)] text-[var(--accent)]"
+                  : "border-[var(--border)] bg-[var(--surface-raised)] text-[var(--text-secondary)] hover:bg-[var(--surface-hover)]",
+              )}
+            >
+              <svg width="12" height="12" viewBox="0 0 16 16" fill="none">
+                <path
+                  d="M8 8a2 2 0 100-4 2 2 0 000 4zM3.5 13a4.5 4.5 0 019 0M12.5 4.5h2M13.5 3.5v2"
+                  stroke="currentColor"
+                  strokeWidth="1.4"
+                  strokeLinecap="round"
+                  strokeLinejoin="round"
+                />
+              </svg>
+              About Roles
+            </button>
+            <button
+              type="button"
+              onClick={() =>
+                setOpenPanel((current) =>
+                  current === "activity" ? null : "activity",
+                )
+              }
               className={cn(
                 "inline-flex items-center gap-1.5 rounded-md border px-3 py-1.5 text-xs font-medium transition",
                 showActivity
@@ -672,6 +731,17 @@ function BoardSurface({ realtimeSchema }: { realtimeSchema: string }) {
       ) : null}
 
       <div className="flex min-h-0 flex-1 overflow-hidden">
+        <div
+          className={cn(
+            "hidden h-full overflow-hidden transition-[width,opacity] duration-300 ease-out xl:block",
+            showRoles ? "w-[28rem] opacity-100" : "w-0 opacity-0",
+          )}
+        >
+          <aside className="flex h-full w-[28rem] shrink-0 flex-col border-r border-[var(--border)] bg-[var(--surface-raised)] p-4">
+            {renderRolePanel()}
+          </aside>
+        </div>
+
         <div className="min-h-0 flex-1 overflow-y-auto p-4 sm:p-6">
           <DndContext
             sensors={sensors}
@@ -708,14 +778,23 @@ function BoardSurface({ realtimeSchema }: { realtimeSchema: string }) {
                 <BoardColumn
                   key={column.id}
                   column={column}
+                  permissions={currentUserAccess}
                   deletingTaskIds={deletingTaskIds}
                   onCreateTask={(status) =>
                     setDialogState({ mode: "create", status })
                   }
-                  onDeleteTask={(task) => {
-                    void handleDeleteTask(task).catch(() => undefined);
-                  }}
-                  onEditTask={(task) => setDialogState({ mode: "edit", task })}
+                  onDeleteTask={
+                    currentUserAccess.deleteTask
+                      ? (task) => {
+                          void handleDeleteTask(task).catch(() => undefined);
+                        }
+                      : undefined
+                  }
+                  onEditTask={
+                    currentUserAccess.editTask
+                      ? (task) => setDialogState({ mode: "edit", task })
+                      : undefined
+                  }
                   onMoveTask={(task, direction) => {
                     void handleTaskMovement(task, direction).catch(
                       () => undefined,
@@ -748,16 +827,24 @@ function BoardSurface({ realtimeSchema }: { realtimeSchema: string }) {
         <div
           className={cn(
             "xl:hidden",
-            showActivity ? "pointer-events-auto" : "pointer-events-none",
+            openPanel ? "pointer-events-auto" : "pointer-events-none",
           )}
         >
           <div
             className={cn(
               "fixed inset-0 z-30 bg-[var(--scrim)] transition-opacity duration-300",
-              showActivity ? "opacity-100" : "opacity-0",
+              openPanel ? "opacity-100" : "opacity-0",
             )}
-            onClick={() => setShowActivity(false)}
+            onClick={() => setOpenPanel(null)}
           />
+          <aside
+            className={cn(
+              "fixed left-0 top-0 z-40 flex h-full w-[28rem] max-w-[94vw] flex-col border-r border-[var(--border)] bg-[var(--surface-raised)] p-4 shadow-xl transition-transform duration-300 ease-out",
+              showRoles ? "translate-x-0" : "-translate-x-full",
+            )}
+          >
+            {renderRolePanel()}
+          </aside>
           <aside
             className={cn(
               "fixed right-0 top-0 z-40 flex h-full w-80 max-w-[88vw] flex-col border-l border-[var(--border)] bg-[var(--surface-raised)] shadow-xl transition-transform duration-300 ease-out",

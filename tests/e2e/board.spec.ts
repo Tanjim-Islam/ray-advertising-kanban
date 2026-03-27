@@ -34,8 +34,18 @@ test("board supports create, edit, status changes, persistence, delete, and real
 
   await Promise.all([pageOne.goto("/"), pageTwo.goto("/")]);
 
+  await pageOne.locator('[data-testid^="user-option-"]').nth(2).click();
+  await expect(pageOne.getByRole("button", { name: /new task/i })).toBeDisabled();
+  await pageOne.getByRole("button", { name: /about roles/i }).click();
+  await expect(
+    pageOne.locator("aside").filter({ hasText: "Role Access" }).first(),
+  ).toBeVisible();
+  await expect(pageOne.getByText("QA Analyst").first()).toBeVisible();
+  await pageOne.getByRole("button", { name: /about roles/i }).click();
+
   await pageOne.locator('[data-testid^="user-option-"]').nth(0).click();
   await pageTwo.locator('[data-testid^="user-option-"]').nth(1).click();
+  await expect(pageOne.getByRole("button", { name: /new task/i })).toBeEnabled();
 
   await createTaskInColumn(
     pageOne,
@@ -57,6 +67,9 @@ test("board supports create, edit, status changes, persistence, delete, and real
   await expect(taskCardByTitle(pageOne, "Ship realtime board v2")).toBeVisible({
     timeout: realtimeTimeout,
   });
+
+  await pageTwoCard.hover();
+  await expect(pageTwoCard.getByRole("button", { name: /delete task/i })).toHaveCount(0);
 
   await moveTaskRight(pageOne, "Ship realtime board v2");
 

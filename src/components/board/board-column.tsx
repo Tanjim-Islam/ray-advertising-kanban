@@ -9,10 +9,10 @@ import {
 import { AddTaskButton } from "@/components/board/add-task-button";
 import { TaskCard } from "@/components/board/task-card";
 import { EmptyState } from "@/components/common/empty-state";
+import type { RoleAccess } from "@/features/tasks/lib/role-access";
 import type { BoardColumn as BoardColumnType } from "@/features/tasks/types/board";
-import type { TaskRecord } from "@/features/tasks/types/task";
 import { BOARD_STATUS_ORDER } from "@/features/tasks/lib/task-utils";
-import type { TaskStatus } from "@/features/tasks/types/task";
+import type { TaskRecord, TaskStatus } from "@/features/tasks/types/task";
 import { cn } from "@/lib/utils/cn";
 
 const STATUS_DOT: Record<TaskStatus, string> = {
@@ -24,6 +24,7 @@ const STATUS_DOT: Record<TaskStatus, string> = {
 export function BoardColumn({
   column,
   deletingTaskIds,
+  permissions,
   onCreateTask,
   onDeleteTask,
   onEditTask,
@@ -31,9 +32,10 @@ export function BoardColumn({
 }: {
   column: BoardColumnType;
   deletingTaskIds?: ReadonlySet<string>;
+  permissions: RoleAccess;
   onCreateTask: (status: BoardColumnType["id"]) => void;
-  onDeleteTask: (task: TaskRecord) => void;
-  onEditTask: (task: TaskRecord) => void;
+  onDeleteTask?: (task: TaskRecord) => void;
+  onEditTask?: (task: TaskRecord) => void;
   onMoveTask: (
     task: TaskRecord,
     direction: "down" | "left" | "right" | "up",
@@ -64,7 +66,15 @@ export function BoardColumn({
             {column.tasks.length}
           </span>
         </div>
-        <AddTaskButton onClick={() => onCreateTask(column.id)} />
+        <AddTaskButton
+          onClick={() => onCreateTask(column.id)}
+          disabled={!permissions.createTask}
+          title={
+            permissions.createTask
+              ? "Add task"
+              : "This role cannot create tasks."
+          }
+        />
       </div>
       <SortableContext
         items={column.tasks.map((task) => task.id)}
@@ -76,20 +86,26 @@ export function BoardColumn({
               <TaskCard
                 key={task.id}
                 task={task}
+                canDrag={permissions.moveTask || permissions.reorderTask}
                 isDeleting={deletingTaskIds?.has(task.id)}
-                onDelete={onDeleteTask}
-                onEdit={onEditTask}
+                onDelete={permissions.deleteTask ? onDeleteTask : undefined}
+                onEdit={permissions.editTask ? onEditTask : undefined}
                 moveControls={{
                   moveLeft:
-                    columnIndex > 0
+                    permissions.moveTask && columnIndex > 0
                       ? () => onMoveTask(task, "left")
                       : undefined,
                   moveRight:
+                    permissions.moveTask &&
                     columnIndex < BOARD_STATUS_ORDER.length - 1
                       ? () => onMoveTask(task, "right")
                       : undefined,
-                  moveUp: index > 0 ? () => onMoveTask(task, "up") : undefined,
+                  moveUp:
+                    permissions.reorderTask && index > 0
+                      ? () => onMoveTask(task, "up")
+                      : undefined,
                   moveDown:
+                    permissions.reorderTask &&
                     index < column.tasks.length - 1
                       ? () => onMoveTask(task, "down")
                       : undefined,
@@ -99,7 +115,13 @@ export function BoardColumn({
           ) : (
             <EmptyState
               title="No tasks"
-              body="Drop a task here or create one"
+              body={
+                permissions.createTask
+                  ? "Drop a task here or create one"
+                  : permissions.moveTask || permissions.reorderTask
+                    ? "Drop a task here"
+                    : "No tasks available for this role"
+              }
             />
           )}
         </div>

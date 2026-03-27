@@ -18,7 +18,11 @@ describe("task routes", () => {
   });
 
   it("creates and updates a task with persisted activity", async () => {
-    const actor = await prisma.user.findFirstOrThrow();
+    const actor = await prisma.user.findFirstOrThrow({
+      where: {
+        role: "Product Lead",
+      },
+    });
 
     const createResponse = await createTaskRoute(
       new Request("http://localhost/api/tasks", {
@@ -75,7 +79,11 @@ describe("task routes", () => {
   });
 
   it("moves and reorders tasks with persisted ordering", async () => {
-    const actor = await prisma.user.findFirstOrThrow();
+    const actor = await prisma.user.findFirstOrThrow({
+      where: {
+        role: "Product Lead",
+      },
+    });
 
     const createTask = async (title: string) => {
       const response = await createTaskRoute(
@@ -138,7 +146,11 @@ describe("task routes", () => {
   });
 
   it("deletes a task and persists delete activity", async () => {
-    const actor = await prisma.user.findFirstOrThrow();
+    const actor = await prisma.user.findFirstOrThrow({
+      where: {
+        role: "Product Lead",
+      },
+    });
 
     const createResponse = await createTaskRoute(
       new Request("http://localhost/api/tasks", {
@@ -194,5 +206,114 @@ describe("task routes", () => {
 
     expect(deletedTask).toBeNull();
     expect(persistedDeleteActivity?.taskId).toBeNull();
+  });
+
+  it("enforces role-based access on task mutations", async () => {
+    const productLead = await prisma.user.findFirstOrThrow({
+      where: {
+        role: "Product Lead",
+      },
+    });
+    const frontendEngineer = await prisma.user.findFirstOrThrow({
+      where: {
+        role: "Frontend Engineer",
+      },
+    });
+    const qaAnalyst = await prisma.user.findFirstOrThrow({
+      where: {
+        role: "QA Analyst",
+      },
+    });
+
+    const createResponse = await createTaskRoute(
+      new Request("http://localhost/api/tasks", {
+        method: "POST",
+        body: JSON.stringify({
+          title: "Protected task",
+          description: "Only some roles should mutate this.",
+          status: "TODO",
+          actorUserId: productLead.id,
+        }),
+      }),
+    );
+    const created = (await createResponse.json()) as { task: { id: string } };
+
+    const qaCreateResponse = await createTaskRoute(
+      new Request("http://localhost/api/tasks", {
+        method: "POST",
+        body: JSON.stringify({
+          title: "Blocked by QA role",
+          description: "Should not be created.",
+          status: "TODO",
+          actorUserId: qaAnalyst.id,
+        }),
+      }),
+    );
+    const qaCreatePayload = (await qaCreateResponse.json()) as { message: string };
+
+    expect(qaCreateResponse.status).toBe(403);
+    expect(qaCreatePayload.message).toContain("cannot create tasks");
+
+    const qaUpdateResponse = await PATCH(
+      new Request(`http://localhost/api/tasks/${created.task.id}`, {
+        method: "PATCH",
+        body: JSON.stringify({
+          title: "QA cannot edit",
+          description: "Blocked",
+          actorUserId: qaAnalyst.id,
+        }),
+      }),
+      {
+        params: Promise.resolve({
+          id: created.task.id,
+        }),
+      },
+    );
+    const qaUpdatePayload = (await qaUpdateResponse.json()) as { message: string };
+
+    expect(qaUpdateResponse.status).toBe(403);
+    expect(qaUpdatePayload.message).toContain("cannot edit task details");
+
+    const frontendDeleteResponse = await DELETE(
+      new Request(`http://localhost/api/tasks/${created.task.id}`, {
+        method: "DELETE",
+        body: JSON.stringify({
+          actorUserId: frontendEngineer.id,
+        }),
+      }),
+      {
+        params: Promise.resolve({
+          id: created.task.id,
+        }),
+      },
+    );
+    const frontendDeletePayload = (await frontendDeleteResponse.json()) as {
+      message: string;
+    };
+
+    expect(frontendDeleteResponse.status).toBe(403);
+    expect(frontendDeletePayload.message).toContain("cannot delete tasks");
+
+    const qaMoveResponse = await moveTaskRoute(
+      new Request("http://localhost/api/tasks/move", {
+        method: "POST",
+        body: JSON.stringify({
+          taskId: created.task.id,
+          toStatus: "IN_PROGRESS",
+          toIndex: 0,
+          actorUserId: qaAnalyst.id,
+        }),
+      }),
+    );
+
+    expect(qaMoveResponse.status).toBe(200);
+
+    const persistedTask = await prisma.task.findUniqueOrThrow({
+      where: {
+        id: created.task.id,
+      },
+    });
+
+    expect(persistedTask.status).toBe("IN_PROGRESS");
   });
 });

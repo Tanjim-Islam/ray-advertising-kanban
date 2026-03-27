@@ -5,6 +5,11 @@ import { deleteTaskRequest } from "@/features/tasks/api/delete-task";
 import { moveTaskRequest } from "@/features/tasks/api/move-task";
 import { reorderTaskRequest } from "@/features/tasks/api/reorder-task";
 import { updateTaskRequest } from "@/features/tasks/api/update-task";
+import {
+  canRolePerformTaskAction,
+  getRoleAccessDeniedMessage,
+  type TaskPermission,
+} from "@/features/tasks/lib/role-access";
 import { applyTaskMove } from "@/features/tasks/lib/reorder";
 import { captureBoardStoreSnapshot, useBoardStoreApi } from "@/features/tasks/store/board-store";
 import { useCurrentUser } from "@/features/tasks/store/user-store";
@@ -22,6 +27,22 @@ function getErrorMessage(error: unknown) {
 export function useTaskActions() {
   const boardStore = useBoardStoreApi();
   const currentUser = useCurrentUser();
+
+  function assertPermission(permission: TaskPermission) {
+    if (!currentUser) {
+      const message = "Select a simulated teammate before performing board actions.";
+      boardStore.getState().setLastError(message);
+      throw new Error(message);
+    }
+
+    if (!canRolePerformTaskAction(currentUser.role, permission)) {
+      const message = getRoleAccessDeniedMessage(currentUser.role, permission);
+      boardStore.getState().setLastError(message);
+      throw new Error(message);
+    }
+
+    return currentUser;
+  }
 
   async function withRollback(
     run: () => Promise<void>,
@@ -47,9 +68,7 @@ export function useTaskActions() {
     status: TaskStatus;
     title: string;
   }) {
-    if (!currentUser) {
-      throw new Error("Select a simulated teammate before creating a task.");
-    }
+    const actor = assertPermission("createTask");
 
     const snapshot = captureBoardStoreSnapshot(boardStore.getState());
     const clientRequestId = crypto.randomUUID();
@@ -65,8 +84,8 @@ export function useTaskActions() {
       order: Date.now(),
       createdAt: timestamp,
       updatedAt: timestamp,
-      createdBy: currentUser,
-      updatedBy: currentUser,
+      createdBy: actor,
+      updatedBy: actor,
       optimistic: true,
       clientRequestId,
     });
@@ -76,7 +95,7 @@ export function useTaskActions() {
         title: params.title,
         description: params.description,
         status: params.status,
-        actorUserId: currentUser.id,
+        actorUserId: actor.id,
         clientRequestId,
       });
       const persistedTask = result.task;
@@ -108,9 +127,7 @@ export function useTaskActions() {
     taskId: string;
     title: string;
   }) {
-    if (!currentUser) {
-      throw new Error("Select a simulated teammate before updating a task.");
-    }
+    const actor = assertPermission("editTask");
 
     return withRollback(async () => {
       const location = findTaskLocation(
@@ -127,13 +144,13 @@ export function useTaskActions() {
         title: params.title,
         description: params.description,
         updatedAt: new Date().toISOString(),
-        updatedBy: currentUser,
+        updatedBy: actor,
       });
 
       const result = await updateTaskRequest(params.taskId, {
         title: params.title,
         description: params.description,
-        actorUserId: currentUser.id,
+        actorUserId: actor.id,
       });
 
       boardStore.getState().applyMutation(result);
@@ -145,9 +162,7 @@ export function useTaskActions() {
     toIndex: number;
     toStatus: TaskStatus;
   }) {
-    if (!currentUser) {
-      throw new Error("Select a simulated teammate before moving a task.");
-    }
+    const actor = assertPermission("moveTask");
 
     return withRollback(async () => {
       const location = findTaskLocation(
@@ -174,7 +189,7 @@ export function useTaskActions() {
         taskId: params.taskId,
         toStatus: params.toStatus,
         toIndex: params.toIndex,
-        actorUserId: currentUser.id,
+        actorUserId: actor.id,
         clientRequestId: crypto.randomUUID(),
       });
 
@@ -183,9 +198,7 @@ export function useTaskActions() {
   }
 
   async function deleteTask(params: { taskId: string }) {
-    if (!currentUser) {
-      throw new Error("Select a simulated teammate before deleting a task.");
-    }
+    const actor = assertPermission("deleteTask");
 
     return withRollback(async () => {
       const location = findTaskLocation(
@@ -203,7 +216,7 @@ export function useTaskActions() {
       });
 
       const result = await deleteTaskRequest(params.taskId, {
-        actorUserId: currentUser.id,
+        actorUserId: actor.id,
       });
 
       boardStore.getState().applyMutation(result);
@@ -215,9 +228,7 @@ export function useTaskActions() {
     taskId: string;
     toIndex: number;
   }) {
-    if (!currentUser) {
-      throw new Error("Select a simulated teammate before reordering a task.");
-    }
+    const actor = assertPermission("reorderTask");
 
     return withRollback(async () => {
       const location = findTaskLocation(
@@ -244,7 +255,7 @@ export function useTaskActions() {
         taskId: params.taskId,
         status: params.status,
         toIndex: params.toIndex,
-        actorUserId: currentUser.id,
+        actorUserId: actor.id,
         clientRequestId: crypto.randomUUID(),
       });
 

@@ -4,6 +4,11 @@ import {
   mapActivityToRecordWithActor,
   mapTaskToRecord,
 } from "@/features/tasks/lib/task-mappers";
+import {
+  canRolePerformTaskAction,
+  getRoleAccessDeniedMessage,
+  type TaskPermission,
+} from "@/features/tasks/lib/role-access";
 import { ORDER_INCREMENT } from "@/features/tasks/lib/task-utils";
 import type {
   CreateTaskInput,
@@ -23,6 +28,15 @@ const TRANSACTION_OPTIONS = {
 
 function clampIndex(value: number, length: number) {
   return Math.min(Math.max(value, 0), length);
+}
+
+function assertActorPermission(
+  role: string | null | undefined,
+  permission: TaskPermission,
+) {
+  if (!canRolePerformTaskAction(role, permission)) {
+    throw new ApiError(403, getRoleAccessDeniedMessage(role, permission));
+  }
 }
 
 async function getTaskOrThrow(
@@ -128,6 +142,7 @@ async function runTaskMutation<T>(
 
 export async function createTask(input: CreateTaskInput) {
   const actor = await getUserByIdOrThrow(input.actorUserId, prisma);
+  assertActorPermission(actor.role, "createTask");
 
   return runTaskMutation(async (client) => {
     const lastTask = await client.task.findFirst({
@@ -174,6 +189,7 @@ export async function createTask(input: CreateTaskInput) {
 
 export async function updateTask(taskId: string, input: UpdateTaskInput) {
   const actor = await getUserByIdOrThrow(input.actorUserId, prisma);
+  assertActorPermission(actor.role, "editTask");
 
   return runTaskMutation(async (client) => {
     await getTaskOrThrow(client, taskId);
@@ -212,6 +228,7 @@ export async function updateTask(taskId: string, input: UpdateTaskInput) {
 
 export async function moveTask(input: MoveTaskInput) {
   const actor = await getUserByIdOrThrow(input.actorUserId, prisma);
+  assertActorPermission(actor.role, "moveTask");
 
   const result = await runTaskMutation(async (client) => {
     const task = await getTaskOrThrow(client, input.taskId);
@@ -305,6 +322,7 @@ export async function moveTask(input: MoveTaskInput) {
 
 export async function reorderTask(input: ReorderTaskInput) {
   const actor = await getUserByIdOrThrow(input.actorUserId, prisma);
+  assertActorPermission(actor.role, "reorderTask");
 
   const result = await runTaskMutation(async (client) => {
     const task = await getTaskOrThrow(client, input.taskId);
@@ -388,6 +406,7 @@ export async function reorderTask(input: ReorderTaskInput) {
 
 export async function deleteTask(taskId: string, input: DeleteTaskInput) {
   const actor = await getUserByIdOrThrow(input.actorUserId, prisma);
+  assertActorPermission(actor.role, "deleteTask");
 
   const result = await runTaskMutation(async (client) => {
     const task = await getTaskOrThrow(client, taskId);

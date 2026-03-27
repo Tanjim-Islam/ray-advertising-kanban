@@ -45,9 +45,12 @@ export function UserSwitcher({
         })}
       </div>
       {currentUser && (
-        <span className="hidden text-xs text-[var(--text-secondary)] sm:block">
-          {currentUser.name}
-        </span>
+        <div className="hidden sm:block">
+          <p className="text-xs text-[var(--text-secondary)]">{currentUser.name}</p>
+          {currentUser.role ? (
+            <p className="text-[11px] text-[var(--text-tertiary)]">{currentUser.role}</p>
+          ) : null}
+        </div>
       )}
     </div>
   );

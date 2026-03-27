@@ -6,6 +6,7 @@ It includes:
 
 - 3 fixed lanes: `To Do`, `In Progress`, `Done`
 - task creation, editing, deletion, and drag-and-drop ordering
+- basic role-based access for the simulated collaborators
 - realtime multi-session sync through Supabase Realtime
 - persistent data in Supabase Postgres through Prisma
 - simulated user switching without full authentication
@@ -184,13 +185,22 @@ Flow:
 
 This keeps cross-session updates fast and preserves the optimistic feel for the initiating client.
 
+## Trade-offs and Assumptions
+
+- I kept the board to the three required lanes only: `To Do`, `In Progress`, and `Done`.
+- I used simulated collaborators instead of full authentication because the assignment only required multi-user simulation.
+- I used optimistic UI updates with rollback so task movement feels immediate while the server still remains the source of truth.
+- I stored explicit task order values in the database so reordering stays deterministic across reloads and realtime updates.
+- I kept role-based access intentionally small and easy to review: `Product Lead` has full access, `Frontend Engineer` cannot delete tasks, and `QA Analyst` is limited to move and reorder actions.
+
 ## Testing
 
 Automated coverage includes:
 
 - unit tests for reorder logic, task utilities, and validation
-- integration tests for board routes, task routes, and persistence behavior
-- Playwright E2E for core browser flows including create, edit, status changes, persistence after reload, delete flows, and multi-session realtime sync
+- unit tests for role-based access rules
+- integration tests for board routes, task routes, persistence behavior, and forbidden role paths
+- Playwright E2E for core browser flows including permission-aware UI, create, edit, status changes, persistence after reload, delete flows, and multi-session realtime sync
 
 Integration tests use an isolated Supabase schema. The Playwright run reseeds the configured app schema to validate the same realtime wiring used by the app runtime.
 
